@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SafeCurrent - Operational SAR Map</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+
+    <style>
+        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; height: 100vh; background: #121212; color: white; }
+        #sidebar { width: 320px; padding: 25px; background: #1e1e1e; display: flex; flex-direction: column; gap: 20px; box-shadow: 4px 0 15px rgba(0,0,0,0.6); z-index: 1000; }
+        #map { flex-grow: 1; height: 100%; }
+        h2 { margin: 0; color: #00ffcc; font-size: 24px; letter-spacing: 1px; }
+        p { margin: 0; font-size: 14px; color: #ccc; line-height: 1.4; }
+        .input-group { display: flex; flex-direction: column; gap: 6px; }
+        label { font-size: 12px; color: #00ffcc; font-weight: bold; text-transform: uppercase; }
+        input { padding: 12px; background: #2a2a2a; color: white; border: 1px solid #3d3d3d; border-radius: 6px; font-size: 14px; }
+        input:focus { border-color: #00ffcc; outline: none; }
+        button { padding: 14px; border-radius: 6px; border: none; font-size: 15px; font-weight: bold; background: #00ffcc; color: #121212; cursor: pointer; transition: all 0.2s ease-in-out; }
+        button:hover { background: #00ttbb; transform: translateY(-1px); }
+        .footer { margin-top: auto; font-size: 11px; color: #666; border-top: 1px solid #333; padding-top: 15px; }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <h2>SafeCurrent UI</h2>
+        <p><strong>Operational Instruction:</strong><br>Click anywhere on the sea area to drop the Last Seen Marker and calculate drift instantly.</p>
+        
+        <div class="input-group">
+            <label>Latitude (Auto-filled)</label>
+            <input type="number" id="lat" value="32.0800" step="0.0001" readonly>
+        </div>
+        <div class="input-group">
+            <label>Longitude (Auto-filled)</label>
+            <input type="number" id="lon" value="34.7650" step="0.0001" readonly>
+        </div>
+        <div class="input-group">
+            <label>Hours Since Drowning:</label>
+            <input type="number" id="hours" value="4" min="1" max="24">
+        </div>
+        
+        <button onclick="triggerSimulation()">Recalculate Current Points</button>
+
+        <div class="footer">
+            System Status: Connected<br>
+            Live Feed: Open-Meteo / Copernicus Marine Backup
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <script>
+        // Initialize map on Israel Coast
+        const map = L.map('map').setView([32.0800, 34.7650], 12);
+        
+        // Using Satellite Layer
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri'
+        }).addTo(map);
+
+        let pathLine = null;
+        let startMarker = null;
+        let heatLayer = null;
+
+        // CLICK MAP TO DROP PIN AND RUN
+        map.on('click', function(e) {
+            const clickedLat = e.latlng.lat;
+            const clickedLng = e.latlng.lng;
+            
+            // Update the UI inputs so the user sees the exact coordinates
+            document.getElementById('lat').value = clickedLat.toFixed(4);
+            document.getElementById('lon').value = clickedLng.toFixed(4);
+            
+            // Draw or move the visual Red Pin on the map instantly
+            if (startMarker) map.removeLayer(startMarker);
+            
+            startMarker = L.marker([clickedLat, clickedLng]).addTo(map)
+                .bindPopup("<b>Last Seen Point</b><br>Calculating drift vectors...").openPopup();
+            
+            // Trigger the backend engine
+            triggerSimulation();
+        });
+
+        async function triggerSimulation() {
+            const lat = document.getElementById('lat').value;
+            const lon = document.getElementById('lon').value;
+            const hours = document.getElementById('hours').value;
+
+            // Clear previous paths and heatmaps, keep the startMarker we just dropped
+            if (pathLine) map.removeLayer(pathLine);
+            if (heatLayer) map.removeLayer(heatLayer);
+
+            try {
+                const response = await fetch(`http://127.0.0.1:8000/simulate?lat=${lat}&lon=${lon}&hours=${hours}`);
+                const result = await response.json();
+
+                if (result.status === "success" && result.trajectory.length > 1) {
+                    const trajectory = result.trajectory;
+                    const latLngs = trajectory.map(p => [p.lat, p.lon]);
+
+                    // Draw the turquoise dashed path showing history
+                    pathLine = L.polyline(latLngs, {color: '#00ffcc', weight: 4, dashArray: '6, 8'}).addTo(map);
+
+                    // Build expanding uncertainty Heatmap around the final zone
+                    let heatPoints = [];
+                    trajectory.forEach((point, index) => {
+                        let intensity = index === trajectory.length - 1 ? 1.0 : 0.3;
+                        heatPoints.push([point.lat, point.lon, intensity]);
+                        
+                        // If it's the last predicted point, spread the statistical search area
+                        if (index === trajectory.length - 1) {
+                            for (let i = 0; i < 40; i++) {
+                                let dispersion = 0.0025 * hours; 
+                                let randomLat = point.lat + (Math.random() - 0.5) * dispersion;
+                                let randomLon = point.lon + (Math.random() - 0.5) * dispersion;
+                                heatPoints.push([randomLat, randomLon, 0.65]);
+                            }
+                        }
+                    });
+
+                    heatLayer = L.heatLayer(heatPoints, {
+                        radius: 28, 
+                        blur: 14, 
+                        maxZoom: 12,
+                        gradient: {0.3: 'blue', 0.6: 'lime', 1: 'red'}
+                    }).addTo(map);
+
+                    // Smoothly slide map view to the target search zone
+                    map.panTo([trajectory[trajectory.length - 1].lat, trajectory[trajectory.length - 1].lon]);
+                }
+            } catch (error) {
+                console.error("API Connection Error:", error);
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+copernicusmarine
+pandas
+numpy
+requests

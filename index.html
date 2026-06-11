@@ -24,6 +24,20 @@
         .hidden { display: none; }
         .time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .time-field { display: flex; flex-direction: column; gap: 6px; }
+        .beach-label {
+            color: #ffffff;
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1.2;
+            white-space: nowrap;
+            padding: 3px 7px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.55);
+            border: 1px solid rgba(0, 255, 204, 0.45);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+            transform: translate(-50%, -50%);
+        }
         #status-message { min-height: 18px; font-size: 12px; color: #aaa; }
         #status-message.error { color: #ff7676; }
         .footer { margin-top: auto; font-size: 11px; color: #666; border-top: 1px solid #333; padding-top: 15px; }
@@ -102,10 +116,83 @@
         // Initialize map on Israel Coast
         const map = L.map('map').setView([32.0800, 34.7650], 12);
         
-        // Using Satellite Layer
-        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-            attribution: 'Tiles &copy; Esri'
+        map.createPane('labels');
+        map.getPane('labels').style.zIndex = 650;
+        map.getPane('labels').style.pointerEvents = 'none';
+
+        const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri',
+            maxZoom: 20,
+            maxNativeZoom: 19
         }).addTo(map);
+
+        const labelLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+            subdomains: 'abcd',
+            maxZoom: 20,
+            pane: 'labels'
+        }).addTo(map);
+
+        const beachLabelLayer = L.layerGroup().addTo(map);
+        let beachLabelAbortController = null;
+        let lastBeachLabelBounds = null;
+        const curatedBeachLabels = [
+            {key: 'tzuk', name: 'Tzuk Beach', lat: 32.1288, lon: 34.7898},
+            {key: 'tel-baruch', name: 'Tel Baruch Beach', lat: 32.1194, lon: 34.7848},
+            {key: 'metsitsim', name: 'Metsitsim Beach', lat: 32.0967, lon: 34.7737},
+            {key: 'nordau', name: 'Nordau Beach', lat: 32.0925, lon: 34.7719},
+            {key: 'hilton', name: 'Hilton Beach', lat: 32.0887, lon: 34.7699},
+            {key: 'gordon', name: 'Gordon Beach', lat: 32.0835, lon: 34.7673},
+            {key: 'frishman', name: 'Frishman Beach', lat: 32.0798, lon: 34.7651},
+            {key: 'bograshov', name: 'Bograshov Beach', lat: 32.0770, lon: 34.7640},
+            {key: 'jerusalem', name: 'Jerusalem Beach', lat: 32.0738, lon: 34.7625},
+            {key: 'banana', name: 'Banana Beach', lat: 32.0693, lon: 34.7604},
+            {key: 'charles-clore', name: 'Charles Clore Beach', lat: 32.0649, lon: 34.7586},
+            {key: 'alma', name: 'Alma Beach', lat: 32.0596, lon: 34.7565},
+            {key: 'jaffa', name: 'Jaffa Beach', lat: 32.0540, lon: 34.7539},
+            {key: 'givat-aliyah', name: 'Givat Aliyah Beach', lat: 32.0357, lon: 34.7466}
+        ];
+        const beachNameAliases = new Map([
+            ['tzuk', 'tzuk'],
+            ['הצוק', 'tzuk'],
+            ['telbaruch', 'tel-baruch'],
+            ['תלברוך', 'tel-baruch'],
+            ['metsitsim', 'metsitsim'],
+            ['metzitzim', 'metsitsim'],
+            ['מציצים', 'metsitsim'],
+            ['nordau', 'nordau'],
+            ['נורדאו', 'nordau'],
+            ['hilton', 'hilton'],
+            ['הילטון', 'hilton'],
+            ['gordon', 'gordon'],
+            ['גורדון', 'gordon'],
+            ['frishman', 'frishman'],
+            ['פרישמן', 'frishman'],
+            ['bograshov', 'bograshov'],
+            ['בוגרשוב', 'bograshov'],
+            ['jerusalem', 'jerusalem'],
+            ['ירושלים', 'jerusalem'],
+            ['banana', 'banana'],
+            ['בננה', 'banana'],
+            ['charlesclore', 'charles-clore'],
+            ['צארלסקלור', 'charles-clore'],
+            ['alma', 'alma'],
+            ['עלמה', 'alma'],
+            ['jaffa', 'jaffa'],
+            ['יפו', 'jaffa'],
+            ['givataliyah', 'givat-aliyah'],
+            ['גבעתעליה', 'givat-aliyah'],
+            ['גבעתעלייה', 'givat-aliyah']
+        ]);
+
+        L.control.layers(
+            {"Satellite": satelliteLayer},
+            {
+                "City labels": labelLayer,
+                "Beach names": beachLabelLayer
+            },
+            {collapsed: true}
+        ).addTo(map);
 
         let pathLine = null;
         let startMarker = null;
@@ -147,6 +234,185 @@
             startMarker = L.marker([lat, lon]).addTo(map)
                 .bindPopup("<b>Last Seen Point</b><br>Calculating drift vectors...").openPopup();
         }
+
+        function getElementCenter(element) {
+            if (element.type === 'node') {
+                return [element.lat, element.lon];
+            }
+
+            if (element.center) {
+                return [element.center.lat, element.center.lon];
+            }
+
+            if (element.bounds) {
+                return [
+                    (element.bounds.minlat + element.bounds.maxlat) / 2,
+                    (element.bounds.minlon + element.bounds.maxlon) / 2
+                ];
+            }
+
+            return null;
+        }
+
+        function escapeHtml(value) {
+            return value
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#039;');
+        }
+
+        function isRealBeachName(name) {
+            const cleanName = name && name.trim();
+
+            if (!cleanName) return false;
+            if (cleanName.startsWith('#')) return false;
+            if (/^#?[A-Za-z]{1,3}\d+[A-Za-z]?$/.test(cleanName)) return false;
+
+            return true;
+        }
+
+        function getBeachName(tags) {
+            if (!tags) return null;
+
+            return [
+                tags['name:he'],
+                tags['name:en'],
+                tags.name,
+                tags['official_name:he'],
+                tags.official_name,
+                tags['alt_name:he'],
+                tags.alt_name
+            ].find(isRealBeachName) || null;
+        }
+
+        function getBeachKey(name) {
+            const normalizedName = name
+                .toLowerCase()
+                .replaceAll('beach', '')
+                .replaceAll('חוף', '')
+                .replace(/[\s'"׳״\-–_.,()/]+/g, '');
+
+            return beachNameAliases.get(normalizedName) || normalizedName;
+        }
+
+        function addBeachLabel(name, center) {
+            L.marker(center, {
+                icon: L.divIcon({
+                    className: '',
+                    html: `<div class="beach-label">${escapeHtml(name)}</div>`,
+                    iconSize: [0, 0]
+                }),
+                interactive: false
+            }).addTo(beachLabelLayer);
+        }
+
+        function addCuratedBeachLabels(bounds, seenNames) {
+            curatedBeachLabels.forEach(beach => {
+                if (seenNames.has(beach.key)) return;
+                if (!bounds.contains([beach.lat, beach.lon])) return;
+
+                seenNames.add(beach.key);
+                addBeachLabel(beach.name, [beach.lat, beach.lon]);
+            });
+        }
+
+        function updateBeachLabels() {
+            if (!map.hasLayer(beachLabelLayer)) return;
+
+            if (map.getZoom() < 13) {
+                if (beachLabelAbortController) {
+                    beachLabelAbortController.abort();
+                }
+                beachLabelLayer.clearLayers();
+                lastBeachLabelBounds = null;
+                return;
+            }
+
+            const bounds = map.getBounds().pad(0.15);
+
+            if (lastBeachLabelBounds && lastBeachLabelBounds.contains(bounds)) return;
+
+            lastBeachLabelBounds = bounds;
+
+            if (beachLabelAbortController) {
+                beachLabelAbortController.abort();
+            }
+
+            const initialSeenNames = new Set();
+            beachLabelLayer.clearLayers();
+            addCuratedBeachLabels(bounds, initialSeenNames);
+
+            beachLabelAbortController = new AbortController();
+            const bbox = [
+                bounds.getSouth(),
+                bounds.getWest(),
+                bounds.getNorth(),
+                bounds.getEast()
+            ].join(',');
+            const query = `
+                [out:json][timeout:12];
+                (
+                  node["natural"="beach"](${bbox});
+                  way["natural"="beach"](${bbox});
+                  relation["natural"="beach"](${bbox});
+                  node["leisure"="beach_resort"](${bbox});
+                  way["leisure"="beach_resort"](${bbox});
+                  relation["leisure"="beach_resort"](${bbox});
+                );
+                out center;
+            `;
+
+            fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`, {
+                signal: beachLabelAbortController.signal
+            })
+                .then(response => response.ok ? response.json() : Promise.reject(new Error('Beach labels unavailable.')))
+                .then(data => {
+                    if (!map.hasLayer(beachLabelLayer) || map.getZoom() < 13) return;
+
+                    const seenNames = new Set();
+                    beachLabelLayer.clearLayers();
+
+                    data.elements.forEach(element => {
+                        const name = getBeachName(element.tags);
+                        const center = getElementCenter(element);
+                        const beachKey = name && getBeachKey(name);
+
+                        if (!name || !center || seenNames.has(beachKey)) return;
+
+                        seenNames.add(beachKey);
+                        addBeachLabel(name, center);
+                    });
+
+                    addCuratedBeachLabels(bounds, seenNames);
+                })
+                .catch(error => {
+                    if (error.name === 'AbortError') return;
+                    if (!map.hasLayer(beachLabelLayer) || map.getZoom() < 13) return;
+
+                    console.warn(error.message);
+                    const seenNames = new Set();
+                    beachLabelLayer.clearLayers();
+                    addCuratedBeachLabels(bounds, seenNames);
+                });
+        }
+
+        map.on('moveend zoomend', updateBeachLabels);
+        map.on('overlayadd', function(event) {
+            if (event.layer === beachLabelLayer) {
+                updateBeachLabels();
+            }
+        });
+        map.on('overlayremove', function(event) {
+            if (event.layer === beachLabelLayer) {
+                if (beachLabelAbortController) {
+                    beachLabelAbortController.abort();
+                }
+                beachLabelLayer.clearLayers();
+                lastBeachLabelBounds = null;
+            }
+        });
 
         function updateDrowningInputVisibility() {
             const mode = document.getElementById('drowning-mode').value;

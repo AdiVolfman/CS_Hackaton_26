@@ -4,7 +4,8 @@ import datetime
 import pandas as pd
 import numpy as np
 import requests
-import copernicusmarine
+
+from fetch_current import CopernicusFetcher
 
 app = FastAPI(title="SafeCurrent - Search & Rescue API")
 
@@ -26,17 +27,7 @@ def get_current_data_fallback(lat, lon, start_time, end_time):
     """
     try:
         print("Attempting to fetch from Copernicus Official API...")
-        ds = copernicusmarine.read(
-            dataset_id="med-cmcc-phys-an-fc-h",
-            variables=["uo", "vo"],
-            longitude_min=lon - 0.5,
-            longitude_max=lon + 0.5,
-            latitude_min=lat - 0.5,
-            latitude_max=lat + 0.5,
-            start_date=start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-            end_date=end_time.strftime("%Y-%m-%dT%H:%M:%S")
-        )
-        df = ds.to_dataframe().reset_index()
+        df = CopernicusFetcher().fetch(lat, lon, start_time, end_time)
         return df, "copernicus"
     except Exception as e:
         print(f"Copernicus failed ({e}). Switching to Open-Meteo Marine API Backup...")
@@ -83,7 +74,7 @@ def calculate_next_position(current_lat, current_lon, target_time, df, hour_inde
     
     if source == "copernicus":
         distances = np.sqrt((hourly_df['latitude'] - current_lat)**2 + (hourly_df['longitude'] - current_lon)**2)
-        closest_row = hourly_df.iloc[distances.idxmin()]
+        closest_row = hourly_df.loc[distances.idxmin()]
     else:
         closest_row = hourly_df.iloc[0]
         
@@ -129,8 +120,8 @@ def simulate_drift(
         
         trajectory.append({
             "hour": h + 1,
-            "lat": round(next_lat, 5),
-            "lon": round(next_lon, 5)
+            "lat": round(float(next_lat), 5),
+            "lon": round(float(next_lon), 5)
         })
         current_lat, current_lon = next_lat, next_lon
         

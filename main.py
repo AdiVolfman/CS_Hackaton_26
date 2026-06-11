@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import datetime
 import json
+import pathlib
+import threading
 from typing import Optional
 import pandas as pd
 import numpy as np
@@ -21,6 +23,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+def print_frontend_url():
+    index_path = pathlib.Path(__file__).resolve().parent / "index.html"
+    if index_path.exists():
+        message = f"Frontend: {index_path.as_uri()}"
+    else:
+        message = f"Frontend: index.html not found at {index_path}"
+    threading.Timer(0.3, lambda: print(message, flush=True)).start()
+
 # --- CORE SIMULATION LOGIC ---
 
 def get_current_data(lat, lon, start_time, end_time):
@@ -34,36 +45,9 @@ def get_current_data(lat, lon, start_time, end_time):
         return df, "copernicus"
     except Exception as e:
         print(f"Copernicus failed ({e}). Switching to Open-Meteo Marine API Backup...")
-        
-        params = {
-            "latitude": lat,
-            "longitude": lon,
-            "hourly": "ocean_current_velocity,ocean_current_direction",
-            "start_hour": start_time.strftime("%Y-%m-%dT%H:%M"),
-            "end_hour": end_time.strftime("%Y-%m-%dT%H:%M"),
-            "cell_selection": "sea"
-        }
-        response = requests.get("https://marine-api.open-meteo.com/v1/marine", params=params, timeout=20).json()
-        
-        # Parse JSON into a simple dataframe structure that matches our needs
-        hourly = response.get('hourly', {})
-        times = hourly.get('time', [])
-        velocities = hourly.get('ocean_current_velocity', []) # given in km/h
-        directions = hourly.get('ocean_current_direction', []) # given in degrees
-        
-        rows = []
-        for t, v, d in zip(times, velocities, directions):
-            # Convert km/h to m/s
-            speed_ms = (v * 1000) / 3600
-            rad = np.radians(d)
-            # Break speed into uo (East) and vo (North) vectors
-            uo = speed_ms * np.sin(rad)
-            vo = speed_ms * np.cos(rad)
-            rows.append({"time": pd.to_datetime(t), "latitude": lat, "longitude": lon, "uo": uo, "vo": vo})
-            
-        return pd.DataFrame(rows), "open-meteo"
         df = OpenMeteoFetcher().fetch(lat, lon, start_time, end_time)
         return df, "open-meteo"
+
 
 def calculate_next_position(current_lat, current_lon, target_time, df, hour_index, source, step_hours=1.0):
     df['time'] = pd.to_datetime(df['time']).dt.tz_localize(None)
@@ -176,19 +160,6 @@ def parse_polygon_points(polygon):
     return points
 
 def run_trajectory(lat, lon, start_time, elapsed_hours, df, source):
-@app.get("/simulate")
-def simulate_drift(
-    lat: float = Query(..., description="Latitude of last seen position"),
-    lon: float = Query(..., description="Longitude of last seen position"),
-    hours: int = Query(5, description="Number of hours to simulate simulation")
-):
-    start_time = datetime.datetime.now(datetime.timezone.utc)
-    end_time = start_time + datetime.timedelta(hours=hours + 2)
-    
-    # Fetch Data
-    df, source = get_current_data(lat, lon, start_time, end_time)
-    
-    # Run Simulation
     trajectory = [{"hour": 0, "lat": lat, "lon": lon}]
     current_lat = lat
     current_lon = lon
@@ -213,9 +184,6 @@ def simulate_drift(
 
         trajectory.append({
             "hour": round(elapsed_so_far, 2),
-            "lat": round(next_lat, 5),
-            "lon": round(next_lon, 5)
-            "hour": h + 1,
             "lat": round(float(next_lat), 5),
             "lon": round(float(next_lon), 5)
         })
@@ -225,49 +193,36 @@ def simulate_drift(
 
     return trajectory
 
-# --- API ENDPOINT ---
 
 @app.get("/simulate")
 def simulate_drift(
     lat: float = Query(..., description="Latitude of last seen position"),
     lon: float = Query(..., description="Longitude of last seen position"),
-    days: Optional[float] = Query(None, ge=0, le=MAX_SIMULATION_DAYS, description="Days since drowning"),
-    hours: Optional[float] = Query(None, ge=0, le=MAX_SIMULATION_HOURS, description="Hours since drowning"),
-    minutes: Optional[float] = Query(None, ge=0, le=MAX_SIMULATION_HOURS * 60, description="Minutes since drowning"),
-    drowning_time: Optional[datetime.datetime] = Query(None, description="UTC drowning time as an ISO timestamp"),
-    polygon: Optional[str] = Query(None, description="Optional JSON list of polygon points with lat/lon")
+    days: Optional[float] = Query(None),
+    hours: Optional[float] = Query(None),
+    minutes: Optional[float] = Query(None),
+    drowning_time: Optional[datetime.datetime] = Query(None),
+    polygon: Optional[str] = Query(None),
 ):
     start_time, now_utc, elapsed_hours = resolve_simulation_window(days, hours, minutes, drowning_time)
-    end_time = now_utc + datetime.timedelta(hours=1)
-    polygon_points = parse_polygon_points(polygon)
+    end_time = now_utc + datetime.timedelta(hours=2)
 
-    # Fetch Data
-    df, source = get_current_data_fallback(lat, lon, start_time, end_time)
-
-    # Run Simulation
+    df, source = get_current_data(lat, lon, start_time, end_time)
     trajectory = run_trajectory(lat, lon, start_time, elapsed_hours, df, source)
-    result = {
-        "status": "success",
-        "data_source_used": source,
-        "initial_position": {"lat": lat, "lon": lon},
-        "hours_simulated": round(elapsed_hours, 2),
-        "trajectory": trajectory
-    }
 
+    area_trajectories = []
+    polygon_points = parse_polygon_points(polygon)
     if polygon_points:
-        area_trajectories = []
         for point_lat, point_lon in polygon_points:
-            area_trajectory = run_trajectory(point_lat, point_lon, start_time, elapsed_hours, df, source)
             area_trajectories.append({
-                "start": {"lat": point_lat, "lon": point_lon},
-                "trajectory": area_trajectory
+                "origin": {"lat": point_lat, "lon": point_lon},
+                "trajectory": run_trajectory(point_lat, point_lon, start_time, elapsed_hours, df, source),
             })
 
-        result["initial_polygon"] = [{"lat": point_lat, "lon": point_lon} for point_lat, point_lon in polygon_points]
-        result["area_trajectories"] = area_trajectories
-        result["final_polygon"] = [
-            {"lat": area["trajectory"][-1]["lat"], "lon": area["trajectory"][-1]["lon"]}
-            for area in area_trajectories
-        ]
-
-    return result
+    return {
+        "status": "success",
+        "trajectory": trajectory,
+        "area_trajectories": area_trajectories,
+        "hours_simulated": round(elapsed_hours, 2),
+        "data_source_used": source,
+    }

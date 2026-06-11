@@ -12,7 +12,7 @@
     <style>
         body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; height: 100vh; background: #121212; color: white; }
         #sidebar { width: 320px; padding: 25px; background: #1e1e1e; display: flex; flex-direction: column; gap: 18px; box-shadow: 4px 0 15px rgba(0,0,0,0.6); z-index: 1000; box-sizing: border-box; overflow-y: auto; }
-        #map { flex-grow: 1; height: 100%; }
+        #map { flex-grow: 1; height: 100%; position: relative; }
         h2 { margin: 0; color: #00ffcc; font-size: 24px; letter-spacing: 1px; }
         p { margin: 0; font-size: 14px; color: #ccc; line-height: 1.4; }
         .input-group { display: flex; flex-direction: column; gap: 6px; }
@@ -222,6 +222,82 @@
             font-weight: 600;
         }
         .loading-indicator.hidden { display: none; }
+        .map-loading-overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 1200;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0.08);
+        }
+        .map-loading-card {
+            width: min(320px, 70%);
+            padding: 18px;
+            border: 1px solid rgba(0, 255, 204, 0.45);
+            border-radius: 6px;
+            background: rgba(18, 18, 18, 0.9);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        }
+        .map-loading-card span {
+            display: block;
+            margin-bottom: 10px;
+            color: #d8fff8;
+            font-size: 13px;
+            font-weight: 700;
+            text-align: center;
+        }
+        .wave-loader {
+            position: relative;
+            height: 58px;
+            overflow: hidden;
+            border: 1px solid rgba(76, 218, 201, 0.35);
+            border-radius: 6px;
+            background: #0b4f5a;
+        }
+        .wave-layer {
+            position: absolute;
+            left: -18%;
+            width: 136%;
+            height: 100%;
+            bottom: 0;
+            animation: wave-drift 4.8s ease-in-out infinite alternate;
+        }
+        .wave-layer svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        .wave-back {
+            opacity: 0.95;
+            animation-duration: 2.2s;
+        }
+        .wave-middle {
+            opacity: 0.9;
+            animation-duration: 1.8s;
+            animation-direction: reverse;
+        }
+        .wave-front {
+            opacity: 0.95;
+            animation-duration: 1.45s;
+        }
+        .map-loading-percent {
+            position: absolute;
+            inset: 0;
+            z-index: 3;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+            text-shadow: 0 1px 5px rgba(0, 0, 0, 0.75);
+        }
+        @keyframes wave-drift {
+            from { transform: translateX(-18px); }
+            to { transform: translateX(18px); }
+        }
         .loading-spinner {
             width: 24px;
             height: 24px;
@@ -243,7 +319,6 @@
 
     <div id="sidebar">
         <h2>SafeCurrent UI</h2>
-        <p><strong>Instruction:</strong><br>Enter coordinates or Pick area From Map, add data.</p>
         <div id="status-message" role="status">Ready</div>
         
         <div class="map-tool-row">
@@ -364,7 +439,31 @@
         </div>
     </div>
 
-    <div id="map"></div>
+    <div id="map">
+        <div id="map-loading-overlay" class="map-loading-overlay hidden" role="status" aria-live="polite">
+            <div class="map-loading-card">
+                <span id="map-loading-label">Calculating drift...</span>
+                <div class="wave-loader" aria-hidden="true">
+                    <div class="wave-layer wave-back">
+                        <svg viewBox="0 0 720 120" preserveAspectRatio="none">
+                            <path fill="#0a5f6f" d="M0 42 C42 42 42 8 84 8 C126 8 126 42 168 42 C210 42 210 8 252 8 C294 8 294 42 336 42 C378 42 378 8 420 8 C462 8 462 42 504 42 C546 42 546 8 588 8 C630 8 630 42 672 42 C696 42 708 32 720 22 L720 120 L0 120 Z"></path>
+                        </svg>
+                    </div>
+                    <div class="wave-layer wave-middle">
+                        <svg viewBox="0 0 720 120" preserveAspectRatio="none">
+                            <path fill="#168b8f" d="M0 58 C60 20 102 20 162 58 C222 96 264 96 324 58 C384 20 426 20 486 58 C546 96 588 96 648 58 C684 35 705 32 720 36 L720 120 L0 120 Z"></path>
+                        </svg>
+                    </div>
+                    <div class="wave-layer wave-front">
+                        <svg viewBox="0 0 720 120" preserveAspectRatio="none">
+                            <path fill="#39b6a6" d="M0 70 C58 38 106 38 164 70 C222 102 270 102 328 70 C386 38 434 38 492 70 C550 102 598 102 656 70 C684 54 704 50 720 54 L720 120 L0 120 Z"></path>
+                        </svg>
+                    </div>
+                    <div id="map-loading-percent" class="map-loading-percent">0%</div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script>
         // Initialize map on Israel Coast
@@ -553,6 +652,9 @@
         let polygonEditMarkers = [];
         let polygonEdgeMarkers = [];
         let polygonPoints = [];
+        let loadingProgress = 0;
+        let loadingProgressTimer = null;
+        let loadingHideTimer = null;
         const API_BASE_URL = 'http://127.0.0.1:8000';
         const MAX_SIMULATION_DAYS = 7;
         const MAX_SIMULATION_HOURS = MAX_SIMULATION_DAYS * 24;
@@ -585,8 +687,41 @@
             statusMessage.classList.toggle('error', isError);
         }
 
+        function setMapLoadingProgress(progress) {
+            loadingProgress = Math.max(0, Math.min(100, progress));
+            document.getElementById('map-loading-percent').textContent = `${Math.round(loadingProgress)}%`;
+        }
+
+        function startMapLoading() {
+            window.clearTimeout(loadingHideTimer);
+            window.clearInterval(loadingProgressTimer);
+            document.getElementById('map-loading-label').textContent = 'Calculating drift...';
+            document.getElementById('map-loading-overlay').classList.remove('hidden');
+            setMapLoadingProgress(0);
+
+            loadingProgressTimer = window.setInterval(() => {
+                const step = loadingProgress < 70 ? 4 : loadingProgress < 92 ? 1.6 : 0.35;
+                setMapLoadingProgress(Math.min(96, loadingProgress + step));
+            }, 220);
+        }
+
+        function stopMapLoading() {
+            window.clearInterval(loadingProgressTimer);
+            document.getElementById('map-loading-label').textContent = 'Calculation complete';
+            setMapLoadingProgress(100);
+
+            loadingHideTimer = window.setTimeout(() => {
+                document.getElementById('map-loading-overlay').classList.add('hidden');
+            }, 350);
+        }
+
         function setLoading(isLoading) {
             document.getElementById('loading-indicator').classList.toggle('hidden', !isLoading);
+            if (isLoading) {
+                startMapLoading();
+            } else {
+                stopMapLoading();
+            }
             document.getElementById('simulate-button').disabled = isLoading;
             document.getElementById('pick-location-button').disabled = isLoading;
             document.getElementById('pick-polygon-button').disabled = isLoading;

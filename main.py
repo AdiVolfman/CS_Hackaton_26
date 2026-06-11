@@ -92,6 +92,7 @@ def fetch_currents_copernicus(min_lon, min_lat, max_lon, max_lat, t0, t1) -> str
         end_datetime=t1.strftime("%Y-%m-%dT%H:%M:%S"),
         output_filename=os.path.basename(out),
         output_directory=os.path.dirname(out),
+        file_format="netcdf",
     )
     return out
 

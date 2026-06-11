@@ -13,8 +13,15 @@ class OpenMeteoFetcher:
     name = "open-meteo"
 
     def fetch(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> pd.DataFrame:
-        url = f"https://marine-api.open-meteo.com/v1/marine?latitude={lat}&longitude={lon}&hourly=ocean_current_velocity,ocean_current_direction"
-        response = requests.get(url).json()
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "hourly": "ocean_current_velocity,ocean_current_direction",
+            "start_hour": start_time.strftime("%Y-%m-%dT%H:%M"),
+            "end_hour": end_time.strftime("%Y-%m-%dT%H:%M"),
+            "cell_selection": "sea",
+        }
+        response = requests.get("https://marine-api.open-meteo.com/v1/marine", params=params, timeout=20).json()
 
         hourly = response.get("hourly", {})
         times = hourly.get("time", [])

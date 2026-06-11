@@ -11,16 +11,218 @@
 
     <style>
         body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; height: 100vh; background: #121212; color: white; }
-        #sidebar { width: 320px; padding: 25px; background: #1e1e1e; display: flex; flex-direction: column; gap: 20px; box-shadow: 4px 0 15px rgba(0,0,0,0.6); z-index: 1000; }
+        #sidebar { width: 320px; padding: 25px; background: #1e1e1e; display: flex; flex-direction: column; gap: 18px; box-shadow: 4px 0 15px rgba(0,0,0,0.6); z-index: 1000; box-sizing: border-box; overflow-y: auto; }
         #map { flex-grow: 1; height: 100%; }
         h2 { margin: 0; color: #00ffcc; font-size: 24px; letter-spacing: 1px; }
         p { margin: 0; font-size: 14px; color: #ccc; line-height: 1.4; }
         .input-group { display: flex; flex-direction: column; gap: 6px; }
         label { font-size: 12px; color: #00ffcc; font-weight: bold; text-transform: uppercase; }
-        input { padding: 12px; background: #2a2a2a; color: white; border: 1px solid #3d3d3d; border-radius: 6px; font-size: 14px; }
-        input:focus { border-color: #00ffcc; outline: none; }
+        input, select { width: 100%; box-sizing: border-box; padding: 12px; background: #2a2a2a; color: white; border: 1px solid #3d3d3d; border-radius: 6px; font-size: 14px; }
+        input:focus, select:focus { border-color: #00ffcc; outline: none; }
+        input[readonly] { color: #d8d8d8; background: #252525; }
         button { padding: 14px; border-radius: 6px; border: none; font-size: 15px; font-weight: bold; background: #00ffcc; color: #121212; cursor: pointer; transition: all 0.2s ease-in-out; }
-        button:hover { background: #00ttbb; transform: translateY(-1px); }
+        button:hover { background: #00ddbb; transform: translateY(-1px); }
+        button:disabled { cursor: wait; opacity: 0.7; transform: none; }
+        .pick-location-button {
+            width: 52px;
+            height: 52px;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #2a2a2a;
+            border: 1px solid #ff4b45;
+        }
+        .pick-location-button:hover { background: #352323; }
+        .pick-location-button.active {
+            background: rgba(255, 75, 69, 0.18);
+            border-color: #ff4b45;
+            box-shadow: 0 0 0 2px rgba(255, 75, 69, 0.25);
+        }
+        .map-tool-row { display: flex; align-items: stretch; gap: 10px; }
+        .map-pin-icon {
+            width: 24px;
+            height: 24px;
+            position: relative;
+            background: #ef2f2f;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.35);
+        }
+        .map-pin-icon::after {
+            content: "";
+            width: 10px;
+            height: 10px;
+            position: absolute;
+            top: 7px;
+            left: 7px;
+            border-radius: 50%;
+            background: #fff;
+        }
+        .polygon-icon {
+            width: 26px;
+            height: 24px;
+            display: block;
+            background: rgba(0, 255, 204, 0.22);
+            border: 3px solid #00ffcc;
+            clip-path: polygon(50% 0, 100% 38%, 82% 100%, 18% 100%, 0 38%);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.35);
+        }
+        #pick-polygon-button {
+            border-color: #00ffcc;
+        }
+        #pick-polygon-button:hover { background: #1d3732; }
+        #pick-polygon-button.active {
+            background: rgba(0, 255, 204, 0.16);
+            box-shadow: 0 0 0 2px rgba(0, 255, 204, 0.22);
+        }
+        .polygon-info {
+            display: grid;
+            flex: 1;
+            min-width: 0;
+            gap: 6px;
+            padding: 10px 12px;
+            border: 1px solid rgba(0, 255, 204, 0.28);
+            border-radius: 6px;
+            background: rgba(0, 255, 204, 0.07);
+        }
+        .polygon-info-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            font-size: 12px;
+            color: #cfcfcf;
+        }
+        .polygon-info-row strong {
+            color: #ffffff;
+            font-size: 13px;
+            text-align: right;
+            white-space: nowrap;
+        }
+        .polygon-edit-handle,
+        .polygon-edge-handle {
+            display: block;
+            box-sizing: border-box;
+            border: 2px solid #121212;
+            box-shadow: 0 2px 7px rgba(0, 0, 0, 0.45);
+        }
+        .polygon-edit-handle {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #00ffcc;
+            cursor: grab;
+        }
+        .polygon-edge-handle {
+            width: 14px;
+            height: 14px;
+            background: #ffbf47;
+            transform: rotate(45deg);
+            cursor: copy;
+        }
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
+        .hidden { display: none !important; }
+        .time-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .elapsed-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+        .date-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+        .time-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+        #time-input-group { gap: 10px; }
+        .uncertainty-toggle {
+            width: 100%;
+            background: #2a2a2a;
+            color: #ffffff;
+            border: 1px solid #3d3d3d;
+            text-align: left;
+        }
+        .uncertainty-toggle:hover { background: #333333; }
+        .uncertainty-toggle.active {
+            color: #121212;
+            background: #ffbf47;
+            border-color: #ffbf47;
+        }
+        .beach-label {
+            color: #ffffff;
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1.2;
+            white-space: nowrap;
+            padding: 3px 7px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.55);
+            border: 1px solid rgba(0, 255, 204, 0.45);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+            transform: translate(-50%, -50%);
+        }
+        .grid-size-control {
+            padding: 8px 10px;
+            border: 1px solid rgba(0, 255, 204, 0.45);
+            border-radius: 6px;
+            background: rgba(18, 18, 18, 0.82);
+            color: #dffdf8;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+            font-size: 12px;
+            line-height: 1.25;
+        }
+        .grid-size-control span {
+            display: block;
+            color: #00ffcc;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .grid-size-control strong {
+            display: block;
+            margin-top: 2px;
+            color: #ffffff;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+        .grid-size-control small {
+            display: block;
+            margin-top: 2px;
+            color: #b9c8c5;
+            font-size: 10px;
+        }
+        .loading-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 44px;
+            padding: 10px 12px;
+            border: 1px solid rgba(0, 255, 204, 0.35);
+            border-radius: 6px;
+            background: rgba(0, 255, 204, 0.08);
+            color: #d8fff8;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .loading-indicator.hidden { display: none; }
+        .loading-spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255, 255, 255, 0.25);
+            border-top-color: #00ffcc;
+            border-radius: 50%;
+            animation: loading-spin 0.8s linear infinite;
+            flex: 0 0 auto;
+        }
+        @keyframes loading-spin {
+            to { transform: rotate(360deg); }
+        }
+        #status-message { min-height: 18px; font-size: 12px; color: #aaa; }
+        #status-message.error { color: #ff7676; }
         .footer { margin-top: auto; font-size: 11px; color: #666; border-top: 1px solid #333; padding-top: 15px; }
     </style>
 </head>
@@ -28,22 +230,119 @@
 
     <div id="sidebar">
         <h2>SafeCurrent UI</h2>
-        <p><strong>Instruction:</strong><br>Click anywhere on the sea area to drop the Last Seen Marker and calculate drift instantly.</p>
+        <p><strong>Operational Instruction:</strong><br>Enter coordinates manually or press Pick From Map, then click the sea area to set the Last Seen Marker.</p>
+        <div id="status-message" role="status">Ready</div>
         
-        <div class="input-group">
-            <label>Latitude (Auto-filled)</label>
-            <input type="number" id="lat" value="32.0800" step="0.0001" readonly>
+        <div class="map-tool-row">
+            <button id="pick-location-button" class="pick-location-button" onclick="togglePickLocationMode()" type="button" aria-label="Pick location from map" title="Pick location from map">
+                <span class="map-pin-icon" aria-hidden="true"></span>
+                <span class="sr-only">Pick location from map</span>
+            </button>
+            <button id="pick-polygon-button" class="pick-location-button" onclick="togglePolygonMode()" type="button" aria-label="Draw area on map" title="Draw area on map">
+                <span class="polygon-icon" aria-hidden="true"></span>
+                <span class="sr-only">Draw area on map</span>
+            </button>
+            <div id="polygon-info" class="polygon-info hidden" aria-live="polite">
+                <div class="polygon-info-row">
+                    <span>Area</span>
+                    <strong id="polygon-area-value">--</strong>
+                </div>
+                <div class="polygon-info-row">
+                    <span>Perimeter</span>
+                    <strong id="polygon-perimeter-value">--</strong>
+                </div>
+                <div class="polygon-info-row">
+                    <span>Points</span>
+                    <strong id="polygon-points-value">0</strong>
+                </div>
+            </div>
         </div>
         <div class="input-group">
-            <label>Longitude (Auto-filled)</label>
-            <input type="number" id="lon" value="34.7650" step="0.0001" readonly>
+            <label for="lat">Latitude</label>
+            <input type="number" id="lat" value="32.0800" min="-90" max="90" step="0.0001">
         </div>
         <div class="input-group">
-            <label>Hours Since Drowning:</label>
-            <input type="number" id="hours" value="4" min="1" max="24">
+            <label for="lon">Longitude</label>
+            <input type="number" id="lon" value="34.7650" min="-180" max="180" step="0.0001">
+        </div>
+        <div class="input-group">
+            <div class="time-row">
+                <div class="time-field">
+                    <label for="weight">Weight</label>
+                    <input type="number" id="weight" value="70" min="1" max="300" step="0.1">
+                </div>
+                <div class="time-field">
+                    <label for="age">Age</label>
+                    <input type="number" id="age" value="30" min="0" max="120" step="1">
+                </div>
+            </div>
+        </div>
+        <div class="input-group">
+            <label for="drowning-mode">Drowning Time Input</label>
+            <select id="drowning-mode" onchange="updateDrowningInputVisibility()">
+                <option value="elapsed">Time Since Drowning</option>
+                <option value="time">Time of Drowning</option>
+            </select>
+        </div>
+        <div class="input-group drowning-input" id="elapsed-input-group">
+            <div class="elapsed-row">
+                <div class="time-field">
+                    <label for="days">Days</label>
+                    <input type="number" id="days" value="0" min="0" max="7" step="1">
+                </div>
+                <div class="time-field">
+                    <label for="hours">Hours</label>
+                    <input type="number" id="hours" value="4" min="0" max="23" step="1">
+                </div>
+                <div class="time-field">
+                    <label for="minutes">Minutes</label>
+                    <input type="number" id="minutes" value="0" min="0" max="59" step="1">
+                </div>
+            </div>
+        </div>
+        <div class="input-group drowning-input hidden" id="time-input-group">
+            <div class="time-field">
+                <label for="drowning-calendar">Calendar</label>
+                <input type="date" id="drowning-calendar" onchange="setManualDateFromCalendar()">
+            </div>
+            <div class="date-row">
+                <div class="time-field">
+                    <label for="drowning-day">Day</label>
+                    <input type="number" id="drowning-day" min="1" max="31" step="1" oninput="handleManualDateInput()">
+                </div>
+                <div class="time-field">
+                    <label for="drowning-month">Month</label>
+                    <input type="number" id="drowning-month" min="1" max="12" step="1" readonly>
+                </div>
+                <div class="time-field">
+                    <label for="drowning-year">Year</label>
+                    <input type="text" id="drowning-year" inputmode="numeric" maxlength="4" readonly>
+                </div>
+            </div>
+            <div class="time-field">
+                <label for="drowning-time">Time</label>
+                <input type="time" id="drowning-time" step="60">
+            </div>
+        </div>
+        <div class="input-group">
+            <button id="time-uncertainty-toggle" class="uncertainty-toggle" onclick="toggleTimeUncertainty()" type="button" aria-pressed="false">Time not exact</button>
+            <div id="time-uncertainty-group" class="time-row hidden">
+                <div class="time-field">
+                    <label for="range-hours">Range Hours</label>
+                    <input type="number" id="range-hours" value="0" min="0" max="168" step="1">
+                </div>
+                <div class="time-field">
+                    <label for="range-minutes">Range Minutes</label>
+                    <input type="number" id="range-minutes" value="30" min="0" max="59" step="1">
+                </div>
+            </div>
         </div>
         
-        <button onclick="triggerSimulation()">Recalculate Current Points</button>
+        <button id="simulate-button" onclick="triggerSimulation()">Recalculate Current Points</button>
+        <div id="loading-indicator" class="loading-indicator hidden" role="status" aria-live="polite">
+            <div class="loading-spinner" aria-hidden="true"></div>
+            <span>Calculating drift...</span>
+        </div>
 
         <div class="footer">
             System Status: Connected<br>
@@ -57,53 +356,1284 @@
         // Initialize map on Israel Coast
         const map = L.map('map').setView([32.0800, 34.7650], 12);
         
-        // Using Satellite Layer
-        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-            attribution: 'Tiles &copy; Esri'
+        map.createPane('labels');
+        map.getPane('labels').style.zIndex = 650;
+        map.getPane('labels').style.pointerEvents = 'none';
+        map.createPane('grid');
+        map.getPane('grid').style.zIndex = 620;
+        map.getPane('grid').style.pointerEvents = 'none';
+
+        const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'Tiles &copy; Esri',
+            maxZoom: 20,
+            maxNativeZoom: 19
         }).addTo(map);
+
+        const labelLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+            subdomains: 'abcd',
+            maxZoom: 20,
+            pane: 'labels'
+        }).addTo(map);
+
+        const beachLabelLayer = L.layerGroup().addTo(map);
+        const gridLayer = L.layerGroup().addTo(map);
+        let beachLabelAbortController = null;
+        let lastBeachLabelBounds = null;
+        const curatedBeachLabels = [
+            {key: 'tzuk', name: 'Tzuk Beach', lat: 32.1288, lon: 34.7898},
+            {key: 'tel-baruch', name: 'Tel Baruch Beach', lat: 32.1194, lon: 34.7848},
+            {key: 'metsitsim', name: 'Metsitsim Beach', lat: 32.0967, lon: 34.7737},
+            {key: 'nordau', name: 'Nordau Beach', lat: 32.0925, lon: 34.7719},
+            {key: 'hilton', name: 'Hilton Beach', lat: 32.0887, lon: 34.7699},
+            {key: 'gordon', name: 'Gordon Beach', lat: 32.0835, lon: 34.7673},
+            {key: 'frishman', name: 'Frishman Beach', lat: 32.0798, lon: 34.7651},
+            {key: 'bograshov', name: 'Bograshov Beach', lat: 32.0770, lon: 34.7640},
+            {key: 'jerusalem', name: 'Jerusalem Beach', lat: 32.0738, lon: 34.7625},
+            {key: 'banana', name: 'Banana Beach', lat: 32.0693, lon: 34.7604},
+            {key: 'charles-clore', name: 'Charles Clore Beach', lat: 32.0649, lon: 34.7586},
+            {key: 'alma', name: 'Alma Beach', lat: 32.0596, lon: 34.7565},
+            {key: 'jaffa', name: 'Jaffa Beach', lat: 32.0540, lon: 34.7539},
+            {key: 'givat-aliyah', name: 'Givat Aliyah Beach', lat: 32.0357, lon: 34.7466}
+        ];
+        const beachNameAliases = new Map([
+            ['tzuk', 'tzuk'],
+            ['הצוק', 'tzuk'],
+            ['telbaruch', 'tel-baruch'],
+            ['תלברוך', 'tel-baruch'],
+            ['metsitsim', 'metsitsim'],
+            ['metzitzim', 'metsitsim'],
+            ['מציצים', 'metsitsim'],
+            ['nordau', 'nordau'],
+            ['נורדאו', 'nordau'],
+            ['hilton', 'hilton'],
+            ['הילטון', 'hilton'],
+            ['gordon', 'gordon'],
+            ['גורדון', 'gordon'],
+            ['frishman', 'frishman'],
+            ['פרישמן', 'frishman'],
+            ['bograshov', 'bograshov'],
+            ['בוגרשוב', 'bograshov'],
+            ['jerusalem', 'jerusalem'],
+            ['ירושלים', 'jerusalem'],
+            ['banana', 'banana'],
+            ['בננה', 'banana'],
+            ['charlesclore', 'charles-clore'],
+            ['צארלסקלור', 'charles-clore'],
+            ['alma', 'alma'],
+            ['עלמה', 'alma'],
+            ['jaffa', 'jaffa'],
+            ['יפו', 'jaffa'],
+            ['givataliyah', 'givat-aliyah'],
+            ['גבעתעליה', 'givat-aliyah'],
+            ['גבעתעלייה', 'givat-aliyah']
+        ]);
+
+        L.control.layers(
+            {"Satellite": satelliteLayer},
+            {
+                "City labels": labelLayer,
+                "Beach names": beachLabelLayer,
+                "Lat/Lon grid": gridLayer
+            },
+            {collapsed: true}
+        ).addTo(map);
+
+        const gridSizeControl = L.control({position: 'bottomright'});
+        gridSizeControl.onAdd = function() {
+            const container = L.DomUtil.create('div', 'grid-size-control');
+            container.innerHTML = `
+                <span>Grid square</span>
+                <strong id="grid-size-value">--</strong>
+                <small id="grid-step-value">--</small>
+            `;
+            L.DomEvent.disableClickPropagation(container);
+            return container;
+        };
+        gridSizeControl.addTo(map);
+
+        function getGridStep(zoom) {
+            if (zoom >= 17) return 0.001;
+            if (zoom >= 15) return 0.0025;
+            if (zoom >= 13) return 0.005;
+            if (zoom >= 11) return 0.01;
+            if (zoom >= 9) return 0.05;
+            if (zoom >= 7) return 0.1;
+            return 0.5;
+        }
+
+        function getGridDecimals(step) {
+            if (step < 0.002) return 3;
+            if (step < 0.01) return 3;
+            if (step < 0.1) return 2;
+            return 1;
+        }
+
+        function updateGridLayer() {
+            if (!map.hasLayer(gridLayer)) return;
+
+            gridLayer.clearLayers();
+
+            const bounds = map.getBounds().pad(0.02);
+            const south = bounds.getSouth();
+            const north = bounds.getNorth();
+            const west = bounds.getWest();
+            const east = bounds.getEast();
+            const step = getGridStep(map.getZoom());
+            const firstLat = Math.ceil(south / step) * step;
+            const firstLon = Math.ceil(west / step) * step;
+            const lineStyle = {
+                pane: 'grid',
+                color: '#00ffcc',
+                weight: 1,
+                opacity: 0.34,
+                interactive: false
+            };
+
+            for (let lat = firstLat; lat <= north + step / 2; lat += step) {
+                const normalizedLat = Number(lat.toFixed(6));
+                L.polyline([[normalizedLat, west], [normalizedLat, east]], lineStyle).addTo(gridLayer);
+            }
+
+            for (let lon = firstLon; lon <= east + step / 2; lon += step) {
+                const normalizedLon = Number(lon.toFixed(6));
+                L.polyline([[south, normalizedLon], [north, normalizedLon]], lineStyle).addTo(gridLayer);
+            }
+
+            updateGridSizeControl();
+        }
+
+        function updateGridSizeControl() {
+            const sizeValue = document.getElementById('grid-size-value');
+            const stepValue = document.getElementById('grid-step-value');
+
+            if (!sizeValue || !stepValue) return;
+
+            if (!map.hasLayer(gridLayer)) {
+                sizeValue.textContent = 'Hidden';
+                stepValue.textContent = 'Turn on Lat/Lon grid';
+                return;
+            }
+
+            const center = map.getCenter();
+            const step = getGridStep(map.getZoom());
+            const decimals = getGridDecimals(step);
+            const widthMeters = getDistanceMeters([center.lat, center.lng], [center.lat, center.lng + step]);
+            const heightMeters = getDistanceMeters([center.lat, center.lng], [center.lat + step, center.lng]);
+
+            sizeValue.textContent = `${formatDistance(widthMeters)} x ${formatDistance(heightMeters)}`;
+            stepValue.textContent = `${step.toFixed(decimals)} deg spacing`;
+        }
 
         let pathLine = null;
         let startMarker = null;
         let heatLayer = null;
+        let areaPathLayer = null;
+        let finalAreaPolygon = null;
+        let timeRangeLayer = null;
+        let isPickingLocation = false;
+        let isDrawingPolygon = false;
+        let selectedPolygon = null;
+        let polygonDraftLine = null;
+        let polygonVertexMarkers = [];
+        let polygonEditMarkers = [];
+        let polygonEdgeMarkers = [];
+        let polygonPoints = [];
+        const API_BASE_URL = 'http://127.0.0.1:8000';
+        const MAX_SIMULATION_DAYS = 7;
+        const MAX_SIMULATION_HOURS = MAX_SIMULATION_DAYS * 24;
 
-        // CLICK MAP TO DROP PIN AND RUN
+        function toLocalDateTimeParts(date) {
+            const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+            const value = localDate.toISOString().slice(0, 16);
+            const dateValue = value.slice(0, 10);
+            const [year, month, day] = dateValue.split('-').map(Number);
+
+            return {
+                date: dateValue,
+                time: value.slice(11, 16),
+                year,
+                month,
+                day
+            };
+        }
+
+        function toDateInputValue(parts) {
+            const year = String(parts.year).padStart(4, '0');
+            const month = String(parts.month).padStart(2, '0');
+            const day = String(parts.day).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        function setStatus(message, isError = false) {
+            const statusMessage = document.getElementById('status-message');
+            statusMessage.textContent = message;
+            statusMessage.classList.toggle('error', isError);
+        }
+
+        function setLoading(isLoading) {
+            document.getElementById('loading-indicator').classList.toggle('hidden', !isLoading);
+            document.getElementById('simulate-button').disabled = isLoading;
+            document.getElementById('pick-location-button').disabled = isLoading;
+            document.getElementById('pick-polygon-button').disabled = isLoading;
+            document.getElementById('time-uncertainty-toggle').disabled = isLoading;
+            document.getElementById('range-hours').disabled = isLoading;
+            document.getElementById('range-minutes').disabled = isLoading;
+        }
+
+        function isTimeUncertaintyEnabled() {
+            return document.getElementById('time-uncertainty-toggle').getAttribute('aria-pressed') === 'true';
+        }
+
+        function setTimeUncertaintyEnabled(isEnabled) {
+            const toggle = document.getElementById('time-uncertainty-toggle');
+            const group = document.getElementById('time-uncertainty-group');
+
+            toggle.classList.toggle('active', isEnabled);
+            toggle.setAttribute('aria-pressed', String(isEnabled));
+            group.classList.toggle('hidden', !isEnabled);
+        }
+
+        function toggleTimeUncertainty() {
+            setTimeUncertaintyEnabled(!isTimeUncertaintyEnabled());
+        }
+
+        function getTimeUncertaintyHours() {
+            if (!isTimeUncertaintyEnabled()) {
+                return 0;
+            }
+
+            const rangeHours = Number(document.getElementById('range-hours').value);
+            const rangeMinutes = Number(document.getElementById('range-minutes').value);
+            const uncertaintyHours = rangeHours + rangeMinutes / 60;
+
+            if (!Number.isFinite(rangeHours) || rangeHours < 0 || !Number.isFinite(rangeMinutes) || rangeMinutes < 0 || rangeMinutes > 59) {
+                throw new Error('Enter a valid time range.');
+            }
+
+            if (!Number.isFinite(uncertaintyHours) || uncertaintyHours <= 0) {
+                throw new Error('Enter a positive time range.');
+            }
+
+            return uncertaintyHours;
+        }
+
+        function getSelectedPosition() {
+            const lat = Number(document.getElementById('lat').value);
+            const lon = Number(document.getElementById('lon').value);
+
+            if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+                throw new Error('Enter a valid latitude between -90 and 90.');
+            }
+
+            if (!Number.isFinite(lon) || lon < -180 || lon > 180) {
+                throw new Error('Enter a valid longitude between -180 and 180.');
+            }
+
+            return {lat, lon};
+        }
+
+        function setLastSeenMarker(lat, lon, title = 'Last Seen Point', openPopup = true) {
+            if (startMarker) map.removeLayer(startMarker);
+
+            startMarker = L.marker([lat, lon]).addTo(map)
+                .bindPopup(`<b>${title}</b><br>Calculating drift vectors...`);
+
+            if (openPopup) {
+                startMarker.openPopup();
+            }
+        }
+
+        function clearAreaResultLayers() {
+            if (areaPathLayer) {
+                map.removeLayer(areaPathLayer);
+                areaPathLayer = null;
+            }
+
+            if (finalAreaPolygon) {
+                map.removeLayer(finalAreaPolygon);
+                finalAreaPolygon = null;
+            }
+        }
+
+        function clearTimeRangeLayer() {
+            if (timeRangeLayer) {
+                map.removeLayer(timeRangeLayer);
+                timeRangeLayer = null;
+            }
+        }
+
+        function clearDriftResultLayers() {
+            if (pathLine) {
+                map.removeLayer(pathLine);
+                pathLine = null;
+            }
+
+            if (heatLayer) {
+                map.removeLayer(heatLayer);
+                heatLayer = null;
+            }
+
+            clearAreaResultLayers();
+            clearTimeRangeLayer();
+        }
+
+        function formatArea(areaSqMeters) {
+            if (areaSqMeters >= 1000000) {
+                return `${(areaSqMeters / 1000000).toFixed(2)} km2`;
+            }
+
+            return `${Math.round(areaSqMeters).toLocaleString()} m2`;
+        }
+
+        function formatDistance(distanceMeters) {
+            if (distanceMeters >= 1000) {
+                return `${(distanceMeters / 1000).toFixed(2)} km`;
+            }
+
+            return `${Math.round(distanceMeters).toLocaleString()} m`;
+        }
+
+        function getDistanceMeters(pointA, pointB) {
+            const earthRadiusMeters = 6371000;
+            const lat1 = pointA[0] * Math.PI / 180;
+            const lat2 = pointB[0] * Math.PI / 180;
+            const deltaLat = (pointB[0] - pointA[0]) * Math.PI / 180;
+            const deltaLon = (pointB[1] - pointA[1]) * Math.PI / 180;
+            const haversine =
+                Math.sin(deltaLat / 2) ** 2 +
+                Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+
+            return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+        }
+
+        function getPolygonAreaSqMeters(points) {
+            if (points.length < 3) return 0;
+
+            const earthRadiusMeters = 6378137;
+            let area = 0;
+
+            points.forEach((point, index) => {
+                const nextPoint = points[(index + 1) % points.length];
+                const lon1 = point[1] * Math.PI / 180;
+                const lon2 = nextPoint[1] * Math.PI / 180;
+                const lat1 = point[0] * Math.PI / 180;
+                const lat2 = nextPoint[0] * Math.PI / 180;
+
+                area += (lon2 - lon1) * (2 + Math.sin(lat1) + Math.sin(lat2));
+            });
+
+            return Math.abs(area * earthRadiusMeters * earthRadiusMeters / 2);
+        }
+
+        function getPolygonPerimeterMeters(points) {
+            if (points.length < 3) return 0;
+
+            return points.reduce((total, point, index) => {
+                const nextPoint = points[(index + 1) % points.length];
+                return total + getDistanceMeters(point, nextPoint);
+            }, 0);
+        }
+
+        function updatePolygonInfo() {
+            const polygonInfo = document.getElementById('polygon-info');
+            const areaValue = document.getElementById('polygon-area-value');
+            const perimeterValue = document.getElementById('polygon-perimeter-value');
+            const pointsValue = document.getElementById('polygon-points-value');
+
+            if (polygonPoints.length === 0) {
+                polygonInfo.classList.add('hidden');
+                areaValue.textContent = '--';
+                perimeterValue.textContent = '--';
+                pointsValue.textContent = '0';
+                return;
+            }
+
+            polygonInfo.classList.remove('hidden');
+            pointsValue.textContent = String(polygonPoints.length);
+
+            if (polygonPoints.length < 3) {
+                areaValue.textContent = '--';
+                perimeterValue.textContent = '--';
+                return;
+            }
+
+            areaValue.textContent = formatArea(getPolygonAreaSqMeters(polygonPoints));
+            perimeterValue.textContent = formatDistance(getPolygonPerimeterMeters(polygonPoints));
+        }
+
+        function createPolygonHandleIcon(type) {
+            const className = type === 'edge' ? 'polygon-edge-handle' : 'polygon-edit-handle';
+            const size = type === 'edge' ? 14 : 16;
+
+            return L.divIcon({
+                className: '',
+                html: `<span class="${className}"></span>`,
+                iconSize: [size, size],
+                iconAnchor: [size / 2, size / 2]
+            });
+        }
+
+        function clearPolygonEditHandles() {
+            polygonEditMarkers.forEach(marker => map.removeLayer(marker));
+            polygonEdgeMarkers.forEach(marker => map.removeLayer(marker));
+            polygonEditMarkers = [];
+            polygonEdgeMarkers = [];
+        }
+
+        function getEdgeMidpoint(firstPoint, secondPoint) {
+            return [
+                (firstPoint[0] + secondPoint[0]) / 2,
+                (firstPoint[1] + secondPoint[1]) / 2
+            ];
+        }
+
+        function syncPolygonEditHandles(skipEdgeIndex = null) {
+            polygonEditMarkers.forEach((marker, index) => {
+                if (polygonPoints[index]) {
+                    marker.setLatLng(polygonPoints[index]);
+                }
+            });
+
+            polygonEdgeMarkers.forEach((marker, index) => {
+                if (index === skipEdgeIndex) return;
+
+                const nextIndex = (index + 1) % polygonPoints.length;
+                if (polygonPoints[index] && polygonPoints[nextIndex]) {
+                    marker.setLatLng(getEdgeMidpoint(polygonPoints[index], polygonPoints[nextIndex]));
+                }
+            });
+        }
+
+        function updateSelectedPolygonFromPoints(statusMessage = null) {
+            if (!selectedPolygon || polygonPoints.length < 3) return;
+
+            selectedPolygon.setLatLngs([polygonPoints]);
+
+            const center = selectedPolygon.getBounds().getCenter();
+            document.getElementById('lat').value = center.lat.toFixed(4);
+            document.getElementById('lon').value = center.lng.toFixed(4);
+            setLastSeenMarker(center.lat, center.lng, 'Selected Area Center', false);
+            updatePolygonInfo();
+            clearDriftResultLayers();
+
+            if (statusMessage) {
+                setStatus(statusMessage);
+            }
+        }
+
+        function addPolygonVertexOnEdge(edgeIndex, latLng) {
+            const insertIndex = edgeIndex + 1;
+            polygonPoints.splice(insertIndex, 0, [latLng.lat, latLng.lng]);
+            updateSelectedPolygonFromPoints(`Vertex added: ${formatArea(getPolygonAreaSqMeters(polygonPoints))}. Recalculate when ready.`);
+            renderPolygonEditHandles();
+        }
+
+        function renderPolygonEditHandles() {
+            clearPolygonEditHandles();
+
+            if (!selectedPolygon || polygonPoints.length < 3) return;
+
+            polygonPoints.forEach((point, index) => {
+                const marker = L.marker(point, {
+                    icon: createPolygonHandleIcon('corner'),
+                    draggable: true,
+                    title: 'Drag corner'
+                }).addTo(map);
+
+                marker.on('drag', function(event) {
+                    const position = event.target.getLatLng();
+                    polygonPoints[index] = [position.lat, position.lng];
+                    updateSelectedPolygonFromPoints(`Polygon adjusted: ${formatArea(getPolygonAreaSqMeters(polygonPoints))}. Recalculate when ready.`);
+                    syncPolygonEditHandles();
+                });
+
+                marker.on('dragend', function() {
+                    syncPolygonEditHandles();
+                });
+
+                polygonEditMarkers.push(marker);
+            });
+
+            polygonPoints.forEach((point, index) => {
+                const nextIndex = (index + 1) % polygonPoints.length;
+                const marker = L.marker(getEdgeMidpoint(point, polygonPoints[nextIndex]), {
+                    icon: createPolygonHandleIcon('edge'),
+                    draggable: true,
+                    title: 'Drag edge, or click to add vertex'
+                }).addTo(map);
+                let lastPosition = marker.getLatLng();
+                let wasDragged = false;
+
+                marker.on('dragstart', function(event) {
+                    lastPosition = event.target.getLatLng();
+                    wasDragged = false;
+                });
+
+                marker.on('drag', function(event) {
+                    wasDragged = true;
+                    const position = event.target.getLatLng();
+                    const deltaLat = position.lat - lastPosition.lat;
+                    const deltaLng = position.lng - lastPosition.lng;
+                    polygonPoints[index] = [polygonPoints[index][0] + deltaLat, polygonPoints[index][1] + deltaLng];
+                    polygonPoints[nextIndex] = [polygonPoints[nextIndex][0] + deltaLat, polygonPoints[nextIndex][1] + deltaLng];
+                    lastPosition = position;
+
+                    updateSelectedPolygonFromPoints(`Polygon edge moved: ${formatArea(getPolygonAreaSqMeters(polygonPoints))}. Recalculate when ready.`);
+                    syncPolygonEditHandles(index);
+                });
+
+                marker.on('dragend', function() {
+                    syncPolygonEditHandles();
+                    window.setTimeout(() => {
+                        wasDragged = false;
+                    }, 150);
+                });
+
+                marker.on('click', function(event) {
+                    if (wasDragged) return;
+
+                    addPolygonVertexOnEdge(index, event.target.getLatLng());
+                });
+
+                polygonEdgeMarkers.push(marker);
+            });
+        }
+
+        function setPickLocationMode(isActive) {
+            isPickingLocation = isActive;
+            const pickButton = document.getElementById('pick-location-button');
+
+            if (isPickingLocation && isDrawingPolygon) {
+                cancelPolygonDrawing(false);
+            }
+
+            pickButton.classList.toggle('active', isPickingLocation);
+            pickButton.setAttribute('aria-label', isPickingLocation ? 'Click map to pick location' : 'Pick location from map');
+            pickButton.title = isPickingLocation ? 'Click map to pick location' : 'Pick location from map';
+            map.getContainer().style.cursor = isPickingLocation ? 'crosshair' : '';
+            setStatus(isPickingLocation ? 'Click the map to set the Last Seen Point.' : 'Ready');
+        }
+
+        function togglePickLocationMode() {
+            setPickLocationMode(!isPickingLocation);
+        }
+
+        function clearPolygonSelection() {
+            if (selectedPolygon) {
+                map.removeLayer(selectedPolygon);
+                selectedPolygon = null;
+            }
+
+            if (polygonDraftLine) {
+                map.removeLayer(polygonDraftLine);
+                polygonDraftLine = null;
+            }
+
+            polygonVertexMarkers.forEach(marker => map.removeLayer(marker));
+            polygonVertexMarkers = [];
+            clearPolygonEditHandles();
+            polygonPoints = [];
+            updatePolygonInfo();
+        }
+
+        function setPolygonButtonState(isActive) {
+            const polygonButton = document.getElementById('pick-polygon-button');
+
+            polygonButton.classList.toggle('active', isActive);
+            polygonButton.setAttribute('aria-label', isActive ? 'Finish area selection' : 'Draw area on map');
+            polygonButton.title = isActive ? 'Finish area selection' : 'Draw area on map';
+        }
+
+        function startPolygonDrawing() {
+            if (isPickingLocation) {
+                setPickLocationMode(false);
+            }
+
+            clearPolygonSelection();
+            clearAreaResultLayers();
+            isDrawingPolygon = true;
+            setPolygonButtonState(true);
+            map.getContainer().style.cursor = 'crosshair';
+            setStatus('Click the map to add polygon points. Press the polygon button again to finish.');
+        }
+
+        function cancelPolygonDrawing(updateStatus = true) {
+            isDrawingPolygon = false;
+            setPolygonButtonState(false);
+            map.getContainer().style.cursor = '';
+
+            if (polygonPoints.length < 3) {
+                clearPolygonSelection();
+            }
+
+            if (updateStatus) {
+                setStatus('Ready');
+            }
+        }
+
+        function addPolygonPoint(lat, lon) {
+            const point = [lat, lon];
+            polygonPoints.push(point);
+            updatePolygonInfo();
+
+            const vertexMarker = L.circleMarker(point, {
+                radius: 5,
+                color: '#00ffcc',
+                weight: 2,
+                fillColor: '#121212',
+                fillOpacity: 1
+            }).addTo(map);
+            polygonVertexMarkers.push(vertexMarker);
+
+            if (polygonPoints.length < 3) {
+                if (polygonDraftLine) {
+                    polygonDraftLine.setLatLngs(polygonPoints);
+                } else {
+                    polygonDraftLine = L.polyline(polygonPoints, {
+                        color: '#00ffcc',
+                        weight: 3,
+                        dashArray: '4, 6'
+                    }).addTo(map);
+                }
+                setStatus(`${polygonPoints.length} polygon point${polygonPoints.length === 1 ? '' : 's'} selected. Add at least 3.`);
+                return;
+            }
+
+            if (polygonDraftLine) {
+                map.removeLayer(polygonDraftLine);
+                polygonDraftLine = null;
+            }
+
+            if (selectedPolygon) {
+                selectedPolygon.setLatLngs([polygonPoints]);
+            } else {
+                selectedPolygon = L.polygon(polygonPoints, {
+                    color: '#00ffcc',
+                    weight: 3,
+                    fillColor: '#00ffcc',
+                    fillOpacity: 0.18
+                }).addTo(map);
+            }
+
+            setStatus(`${polygonPoints.length} polygon points selected. Area ${formatArea(getPolygonAreaSqMeters(polygonPoints))}. Press the polygon button again to finish.`);
+        }
+
+        function finishPolygonSelection() {
+            if (!selectedPolygon || polygonPoints.length < 3) {
+                setStatus('Add at least 3 polygon points before finishing.', true);
+                return;
+            }
+
+            const center = selectedPolygon.getBounds().getCenter();
+            document.getElementById('lat').value = center.lat.toFixed(4);
+            document.getElementById('lon').value = center.lng.toFixed(4);
+
+            polygonVertexMarkers.forEach(marker => map.removeLayer(marker));
+            polygonVertexMarkers = [];
+            isDrawingPolygon = false;
+            setPolygonButtonState(false);
+            map.getContainer().style.cursor = '';
+            setLastSeenMarker(center.lat, center.lng, 'Selected Area Center');
+            updatePolygonInfo();
+            renderPolygonEditHandles();
+            setStatus(`Polygon selected: ${formatArea(getPolygonAreaSqMeters(polygonPoints))}. Drag turquoise corners, drag orange edges, or click orange to add vertices.`);
+        }
+
+        function getSelectedPolygonPayload() {
+            if (!selectedPolygon || polygonPoints.length < 3) {
+                return null;
+            }
+
+            return polygonPoints.map(point => ({
+                lat: Number(point[0].toFixed(5)),
+                lon: Number(point[1].toFixed(5))
+            }));
+        }
+
+        function togglePolygonMode() {
+            if (isDrawingPolygon) {
+                finishPolygonSelection();
+                return;
+            }
+
+            startPolygonDrawing();
+        }
+
+        function getElementCenter(element) {
+            if (element.type === 'node') {
+                return [element.lat, element.lon];
+            }
+
+            if (element.center) {
+                return [element.center.lat, element.center.lon];
+            }
+
+            if (element.bounds) {
+                return [
+                    (element.bounds.minlat + element.bounds.maxlat) / 2,
+                    (element.bounds.minlon + element.bounds.maxlon) / 2
+                ];
+            }
+
+            return null;
+        }
+
+        function escapeHtml(value) {
+            return value
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#039;');
+        }
+
+        function isRealBeachName(name) {
+            const cleanName = name && name.trim();
+
+            if (!cleanName) return false;
+            if (cleanName.startsWith('#')) return false;
+            if (/^#?[A-Za-z]{1,3}\d+[A-Za-z]?$/.test(cleanName)) return false;
+
+            return true;
+        }
+
+        function getBeachName(tags) {
+            if (!tags) return null;
+
+            return [
+                tags['name:he'],
+                tags['name:en'],
+                tags.name,
+                tags['official_name:he'],
+                tags.official_name,
+                tags['alt_name:he'],
+                tags.alt_name
+            ].find(isRealBeachName) || null;
+        }
+
+        function getBeachKey(name) {
+            const normalizedName = name
+                .toLowerCase()
+                .replaceAll('beach', '')
+                .replaceAll('חוף', '')
+                .replace(/[\s'"׳״\-–_.,()/]+/g, '');
+
+            return beachNameAliases.get(normalizedName) || normalizedName;
+        }
+
+        function addBeachLabel(name, center) {
+            L.marker(center, {
+                icon: L.divIcon({
+                    className: '',
+                    html: `<div class="beach-label">${escapeHtml(name)}</div>`,
+                    iconSize: [0, 0]
+                }),
+                interactive: false
+            }).addTo(beachLabelLayer);
+        }
+
+        function addCuratedBeachLabels(bounds, seenNames) {
+            curatedBeachLabels.forEach(beach => {
+                if (seenNames.has(beach.key)) return;
+                if (!bounds.contains([beach.lat, beach.lon])) return;
+
+                seenNames.add(beach.key);
+                addBeachLabel(beach.name, [beach.lat, beach.lon]);
+            });
+        }
+
+        function updateBeachLabels() {
+            if (!map.hasLayer(beachLabelLayer)) return;
+
+            if (map.getZoom() < 13) {
+                if (beachLabelAbortController) {
+                    beachLabelAbortController.abort();
+                }
+                beachLabelLayer.clearLayers();
+                lastBeachLabelBounds = null;
+                return;
+            }
+
+            const bounds = map.getBounds().pad(0.15);
+
+            if (lastBeachLabelBounds && lastBeachLabelBounds.contains(bounds)) return;
+
+            lastBeachLabelBounds = bounds;
+
+            if (beachLabelAbortController) {
+                beachLabelAbortController.abort();
+            }
+
+            const initialSeenNames = new Set();
+            beachLabelLayer.clearLayers();
+            addCuratedBeachLabels(bounds, initialSeenNames);
+
+            beachLabelAbortController = new AbortController();
+            const bbox = [
+                bounds.getSouth(),
+                bounds.getWest(),
+                bounds.getNorth(),
+                bounds.getEast()
+            ].join(',');
+            const query = `
+                [out:json][timeout:12];
+                (
+                  node["natural"="beach"](${bbox});
+                  way["natural"="beach"](${bbox});
+                  relation["natural"="beach"](${bbox});
+                  node["leisure"="beach_resort"](${bbox});
+                  way["leisure"="beach_resort"](${bbox});
+                  relation["leisure"="beach_resort"](${bbox});
+                );
+                out center;
+            `;
+
+            fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`, {
+                signal: beachLabelAbortController.signal
+            })
+                .then(response => response.ok ? response.json() : Promise.reject(new Error('Beach labels unavailable.')))
+                .then(data => {
+                    if (!map.hasLayer(beachLabelLayer) || map.getZoom() < 13) return;
+
+                    const seenNames = new Set();
+                    beachLabelLayer.clearLayers();
+
+                    data.elements.forEach(element => {
+                        const name = getBeachName(element.tags);
+                        const center = getElementCenter(element);
+                        const beachKey = name && getBeachKey(name);
+
+                        if (!name || !center || seenNames.has(beachKey)) return;
+
+                        seenNames.add(beachKey);
+                        addBeachLabel(name, center);
+                    });
+
+                    addCuratedBeachLabels(bounds, seenNames);
+                })
+                .catch(error => {
+                    if (error.name === 'AbortError') return;
+                    if (!map.hasLayer(beachLabelLayer) || map.getZoom() < 13) return;
+
+                    console.warn(error.message);
+                    const seenNames = new Set();
+                    beachLabelLayer.clearLayers();
+                    addCuratedBeachLabels(bounds, seenNames);
+                });
+        }
+
+        map.on('moveend zoomend', updateBeachLabels);
+        map.on('moveend zoomend', updateGridLayer);
+        map.on('overlayadd', function(event) {
+            if (event.layer === beachLabelLayer) {
+                updateBeachLabels();
+            }
+
+            if (event.layer === gridLayer) {
+                updateGridLayer();
+            }
+        });
+        map.on('overlayremove', function(event) {
+            if (event.layer === beachLabelLayer) {
+                if (beachLabelAbortController) {
+                    beachLabelAbortController.abort();
+                }
+                beachLabelLayer.clearLayers();
+                lastBeachLabelBounds = null;
+            }
+
+            if (event.layer === gridLayer) {
+                gridLayer.clearLayers();
+                updateGridSizeControl();
+            }
+        });
+        updateGridLayer();
+
+        function updateDrowningInputVisibility() {
+            const mode = document.getElementById('drowning-mode').value;
+            document.querySelectorAll('.drowning-input').forEach(group => group.classList.add('hidden'));
+            document.getElementById(`${mode}-input-group`).classList.remove('hidden');
+
+            updateDrowningTimeLimits();
+        }
+
+        function updateDrowningTimeLimits() {
+            const nowParts = toLocalDateTimeParts(new Date());
+            const earliestParts = toLocalDateTimeParts(new Date(Date.now() - MAX_SIMULATION_HOURS * 3600000));
+            const calendarInput = document.getElementById('drowning-calendar');
+            const timeInput = document.getElementById('drowning-time');
+            const day = Number(document.getElementById('drowning-day').value);
+            const month = Number(document.getElementById('drowning-month').value);
+            const yearValue = document.getElementById('drowning-year').value.trim();
+            const year = Number(yearValue);
+
+            calendarInput.min = toDateInputValue(earliestParts);
+            calendarInput.max = toDateInputValue(nowParts);
+
+            if (yearValue.length !== 4 || !Number.isInteger(year)) {
+                timeInput.removeAttribute('max');
+                timeInput.removeAttribute('min');
+                return;
+            }
+
+            if (day === nowParts.day && month === nowParts.month && year === nowParts.year) {
+                timeInput.max = nowParts.time;
+            } else {
+                timeInput.removeAttribute('max');
+            }
+
+            if (day === earliestParts.day && month === earliestParts.month && year === earliestParts.year) {
+                timeInput.min = earliestParts.time;
+            } else {
+                timeInput.removeAttribute('min');
+            }
+        }
+
+        function syncCalendarFromManualDate() {
+            const day = Number(document.getElementById('drowning-day').value);
+            const month = Number(document.getElementById('drowning-month').value);
+            const yearValue = document.getElementById('drowning-year').value.trim();
+            const year = Number(yearValue);
+            const calendarInput = document.getElementById('drowning-calendar');
+
+            if (!Number.isInteger(day) || !Number.isInteger(month) || yearValue.length !== 4 || !Number.isInteger(year)) {
+                return;
+            }
+
+            const manualDate = new Date(year, month - 1, day);
+
+            if (
+                Number.isNaN(manualDate.getTime())
+                || manualDate.getFullYear() !== year
+                || manualDate.getMonth() !== month - 1
+                || manualDate.getDate() !== day
+            ) {
+                calendarInput.value = '';
+                return;
+            }
+
+            calendarInput.value = toDateInputValue({year, month, day});
+        }
+
+        function handleManualDateInput() {
+            syncCalendarFromManualDate();
+            updateDrowningTimeLimits();
+        }
+
+        function setManualDateFromCalendar() {
+            const calendarValue = document.getElementById('drowning-calendar').value;
+
+            if (!calendarValue) {
+                updateDrowningTimeLimits();
+                return;
+            }
+
+            const [year, month, day] = calendarValue.split('-').map(Number);
+            document.getElementById('drowning-day').value = day;
+            document.getElementById('drowning-month').value = month;
+            document.getElementById('drowning-year').value = year;
+            updateDrowningTimeLimits();
+        }
+
+        function buildDateFromManualInputs() {
+            const day = Number(document.getElementById('drowning-day').value);
+            const month = Number(document.getElementById('drowning-month').value);
+            const yearValue = document.getElementById('drowning-year').value.trim();
+            const year = Number(yearValue);
+            const timeValue = document.getElementById('drowning-time').value;
+            const [hour, minute] = timeValue.split(':').map(Number);
+
+            if (!Number.isInteger(day) || !Number.isInteger(month) || yearValue.length !== 4 || !Number.isInteger(year) || !timeValue) {
+                throw new Error('Enter a valid day, month, year, and time.');
+            }
+
+            const drowningDate = new Date(year, month - 1, day, hour, minute);
+
+            if (
+                Number.isNaN(drowningDate.getTime())
+                || drowningDate.getFullYear() !== year
+                || drowningDate.getMonth() !== month - 1
+                || drowningDate.getDate() !== day
+                || drowningDate.getHours() !== hour
+                || drowningDate.getMinutes() !== minute
+            ) {
+                throw new Error('Enter a valid day, month, year, and time.');
+            }
+
+            return drowningDate;
+        }
+
+        function createSimulationParams(lat, lon, polygonPayload) {
+            const params = new URLSearchParams({lat, lon});
+
+            if (polygonPayload) {
+                params.set('polygon', JSON.stringify(polygonPayload));
+            }
+
+            return params;
+        }
+
+        function createElapsedSimulationParams(lat, lon, elapsedHours, polygonPayload) {
+            const params = createSimulationParams(lat, lon, polygonPayload);
+            params.set('hours', Number(elapsedHours.toFixed(4)));
+            return params;
+        }
+
+        function formatDurationHours(durationHours) {
+            const wholeHours = Math.floor(durationHours);
+            const minutes = Math.round((durationHours - wholeHours) * 60);
+
+            if (wholeHours === 0) {
+                return `${minutes} min`;
+            }
+
+            if (minutes === 0) {
+                return `${wholeHours} hr`;
+            }
+
+            return `${wholeHours} hr ${minutes} min`;
+        }
+
+        function buildSimulationParams(lat, lon) {
+            const mode = document.getElementById('drowning-mode').value;
+            const polygonPayload = getSelectedPolygonPayload();
+            const params = createSimulationParams(lat, lon, polygonPayload);
+            let elapsedHours = 0;
+
+            if (mode === 'elapsed') {
+                const days = Number(document.getElementById('days').value);
+                const hours = Number(document.getElementById('hours').value);
+                const minutes = Number(document.getElementById('minutes').value);
+                elapsedHours = days * 24 + hours + minutes / 60;
+                params.set('days', days);
+                params.set('hours', hours);
+                params.set('minutes', minutes);
+            } else {
+                const drowningDate = buildDateFromManualInputs();
+
+                elapsedHours = (Date.now() - drowningDate.getTime()) / 3600000;
+                params.set('drowning_time', drowningDate.toISOString());
+            }
+
+            if (!Number.isFinite(elapsedHours) || elapsedHours <= 0) {
+                throw new Error('The drowning time must be in the past.');
+            }
+
+            if (elapsedHours > MAX_SIMULATION_HOURS) {
+                throw new Error(`Use a value up to ${MAX_SIMULATION_DAYS} days.`);
+            }
+
+            const uncertaintyHours = getTimeUncertaintyHours();
+            let rangeRequests = [];
+
+            if (uncertaintyHours > 0) {
+                const latestElapsedHours = elapsedHours - uncertaintyHours;
+                const earliestElapsedHours = elapsedHours + uncertaintyHours;
+
+                if (latestElapsedHours <= 0) {
+                    throw new Error('The time range is too large. The latest possible time must still be in the past.');
+                }
+
+                if (earliestElapsedHours > MAX_SIMULATION_HOURS) {
+                    throw new Error(`The time range is too large. Use a range within ${MAX_SIMULATION_DAYS} days.`);
+                }
+
+                rangeRequests = [
+                    {
+                        label: 'Latest possible time',
+                        params: createElapsedSimulationParams(lat, lon, latestElapsedHours, polygonPayload),
+                        elapsedHours: latestElapsedHours,
+                        color: '#58a6ff'
+                    },
+                    {
+                        label: 'Earliest possible time',
+                        params: createElapsedSimulationParams(lat, lon, earliestElapsedHours, polygonPayload),
+                        elapsedHours: earliestElapsedHours,
+                        color: '#ff5db8'
+                    }
+                ];
+            }
+
+            return {params, elapsedHours, uncertaintyHours, rangeRequests};
+        }
+
+        async function requestSimulation(params) {
+            const response = await fetch(`${API_BASE_URL}/simulate?${params.toString()}`);
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.detail || 'Simulation failed.');
+            }
+
+            return result;
+        }
+
+        function drawTimeRangeResults(rangeResults, heatPoints) {
+            const rangeBoundsPoints = [];
+
+            if (rangeResults.length === 0) {
+                return rangeBoundsPoints;
+            }
+
+            timeRangeLayer = L.layerGroup().addTo(map);
+
+            rangeResults.forEach(({request, result}) => {
+                if (!result || result.status !== 'success' || result.trajectory.length <= 1) return;
+
+                const trajectory = result.trajectory;
+                const latLngs = trajectory.map(point => [point.lat, point.lon]);
+                const finalPoint = latLngs[latLngs.length - 1];
+
+                L.polyline(latLngs, {
+                    color: request.color,
+                    weight: 3,
+                    opacity: 0.82,
+                    dashArray: '10, 8'
+                }).addTo(timeRangeLayer).bindPopup(`<b>${request.label}</b><br>${result.hours_simulated} hours simulated.`);
+
+                rangeBoundsPoints.push(finalPoint);
+                heatPoints.push([finalPoint[0], finalPoint[1], 0.85]);
+
+                if (Array.isArray(result.area_trajectories) && result.area_trajectories.length > 0) {
+                    const finalAreaPoints = [];
+
+                    result.area_trajectories.forEach(area => {
+                        const areaLatLngs = area.trajectory.map(point => [point.lat, point.lon]);
+
+                        if (areaLatLngs.length > 1) {
+                            L.polyline(areaLatLngs, {
+                                color: request.color,
+                                weight: 2,
+                                opacity: 0.55,
+                                dashArray: '3, 7'
+                            }).addTo(timeRangeLayer);
+                        }
+
+                        if (areaLatLngs.length > 0) {
+                            finalAreaPoints.push(areaLatLngs[areaLatLngs.length - 1]);
+                        }
+                    });
+
+                    if (finalAreaPoints.length >= 3) {
+                        L.polygon(finalAreaPoints, {
+                            color: request.color,
+                            weight: 2,
+                            opacity: 0.8,
+                            fillColor: request.color,
+                            fillOpacity: 0.12
+                        }).addTo(timeRangeLayer).bindPopup(`<b>${request.label}</b><br>Time range area.`);
+                    }
+
+                    finalAreaPoints.forEach(point => {
+                        rangeBoundsPoints.push(point);
+                        heatPoints.push([point[0], point[1], 0.72]);
+                    });
+                }
+            });
+
+            return rangeBoundsPoints;
+        }
+
+        // Pick mode lets regular map clicks pan/inspect without changing the selected location.
         map.on('click', function(e) {
             const clickedLat = e.latlng.lat;
             const clickedLng = e.latlng.lng;
+
+            if (isDrawingPolygon) {
+                addPolygonPoint(clickedLat, clickedLng);
+                return;
+            }
+
+            if (!isPickingLocation) return;
             
             // Update the UI inputs so the user sees the exact coordinates
             document.getElementById('lat').value = clickedLat.toFixed(4);
             document.getElementById('lon').value = clickedLng.toFixed(4);
             
             // Draw or move the visual Red Pin on the map instantly
-            if (startMarker) map.removeLayer(startMarker);
-            
-            startMarker = L.marker([clickedLat, clickedLng]).addTo(map)
-                .bindPopup("<b>Last Seen Point</b><br>Calculating drift vectors...").openPopup();
-            
-            // Trigger the backend engine
-            triggerSimulation();
+            clearPolygonSelection();
+            clearAreaResultLayers();
+            setLastSeenMarker(clickedLat, clickedLng);
+            setPickLocationMode(false);
         });
 
         async function triggerSimulation() {
-            const lat = document.getElementById('lat').value;
-            const lon = document.getElementById('lon').value;
-            const hours = document.getElementById('hours').value;
-
-            // Clear previous paths and heatmaps, keep the startMarker we just dropped
-            if (pathLine) map.removeLayer(pathLine);
-            if (heatLayer) map.removeLayer(heatLayer);
+            let elapsedHours = 0;
 
             try {
-                const response = await fetch(`http://127.0.0.1:8000/simulate?lat=${lat}&lon=${lon}&hours=${hours}`);
-                const result = await response.json();
+                if (isDrawingPolygon) {
+                    if (!selectedPolygon || polygonPoints.length < 3) {
+                        throw new Error('Finish the polygon first, or add at least 3 points.');
+                    }
+
+                    finishPolygonSelection();
+                }
+
+                const {lat, lon} = getSelectedPosition();
+                const simulationInput = buildSimulationParams(lat, lon);
+                elapsedHours = simulationInput.elapsedHours;
+
+                if (isPickingLocation) {
+                    setPickLocationMode(false);
+                }
+
+                clearDriftResultLayers();
+
+                setLastSeenMarker(lat, lon);
+                setLoading(true);
+                setStatus('Calculating drift...');
+
+                const result = await requestSimulation(simulationInput.params);
+                let rangeResults = [];
+
+                if (simulationInput.rangeRequests.length > 0) {
+                    setStatus('Calculating drift time range...');
+                    rangeResults = await Promise.all(
+                        simulationInput.rangeRequests.map(async request => ({
+                            request,
+                            result: await requestSimulation(request.params)
+                        }))
+                    );
+                }
 
                 if (result.status === "success" && result.trajectory.length > 1) {
                     const trajectory = result.trajectory;
                     const latLngs = trajectory.map(p => [p.lat, p.lon]);
+                    let finalAreaPoints = [];
 
                     // Draw the turquoise dashed path showing history
                     pathLine = L.polyline(latLngs, {color: '#00ffcc', weight: 4, dashArray: '6, 8'}).addTo(map);
+
+                    if (Array.isArray(result.area_trajectories) && result.area_trajectories.length > 0) {
+                        areaPathLayer = L.layerGroup().addTo(map);
+
+                        result.area_trajectories.forEach(area => {
+                            const areaLatLngs = area.trajectory.map(p => [p.lat, p.lon]);
+
+                            if (areaLatLngs.length > 1) {
+                                L.polyline(areaLatLngs, {
+                                    color: '#ffbf47',
+                                    weight: 2,
+                                    opacity: 0.75,
+                                    dashArray: '3, 6'
+                                }).addTo(areaPathLayer);
+                            }
+
+                            if (areaLatLngs.length > 0) {
+                                finalAreaPoints.push(areaLatLngs[areaLatLngs.length - 1]);
+                            }
+                        });
+
+                        if (finalAreaPoints.length >= 3) {
+                            finalAreaPolygon = L.polygon(finalAreaPoints, {
+                                color: '#ffbf47',
+                                weight: 3,
+                                fillColor: '#ffbf47',
+                                fillOpacity: 0.2
+                            }).addTo(map).bindPopup('<b>Predicted Area</b><br>Polygon drift projection.');
+                        }
+                    }
 
                     // Build expanding uncertainty Heatmap around the final zone
                     let heatPoints = [];
@@ -114,13 +1644,15 @@
                         // If it's the last predicted point, spread the statistical search area
                         if (index === trajectory.length - 1) {
                             for (let i = 0; i < 40; i++) {
-                                let dispersion = 0.0025 * hours; 
+                                let dispersion = 0.0025 * elapsedHours;
                                 let randomLat = point.lat + (Math.random() - 0.5) * dispersion;
                                 let randomLon = point.lon + (Math.random() - 0.5) * dispersion;
                                 heatPoints.push([randomLat, randomLon, 0.65]);
                             }
                         }
                     });
+                    finalAreaPoints.forEach(point => heatPoints.push([point[0], point[1], 0.8]));
+                    const rangeBoundsPoints = drawTimeRangeResults(rangeResults, heatPoints);
 
                     heatLayer = L.heatLayer(heatPoints, {
                         radius: 28, 
@@ -130,12 +1662,34 @@
                     }).addTo(map);
 
                     // Smoothly slide map view to the target search zone
-                    map.panTo([trajectory[trajectory.length - 1].lat, trajectory[trajectory.length - 1].lon]);
+                    const allBoundsPoints = latLngs.concat(finalAreaPoints, rangeBoundsPoints);
+                    const uncertaintyText = simulationInput.uncertaintyHours > 0
+                        ? ` +/- ${formatDurationHours(simulationInput.uncertaintyHours)}`
+                        : '';
+
+                    if (finalAreaPoints.length >= 3 || rangeBoundsPoints.length > 0) {
+                        map.fitBounds(L.latLngBounds(allBoundsPoints).pad(0.18));
+                        setStatus(`Calculated ${result.hours_simulated} hours${uncertaintyText} from ${result.data_source_used}.`);
+                    } else {
+                        map.panTo([trajectory[trajectory.length - 1].lat, trajectory[trajectory.length - 1].lon]);
+                        setStatus(`Calculated ${result.hours_simulated} hours${uncertaintyText} from ${result.data_source_used}.`);
+                    }
                 }
             } catch (error) {
                 console.error("API Connection Error:", error);
+                setStatus(error.message, true);
+            } finally {
+                setLoading(false);
             }
         }
+
+        const defaultDrowningDate = toLocalDateTimeParts(new Date());
+        document.getElementById('drowning-day').value = defaultDrowningDate.day;
+        document.getElementById('drowning-month').value = defaultDrowningDate.month;
+        document.getElementById('drowning-year').value = defaultDrowningDate.year;
+        document.getElementById('drowning-calendar').value = toDateInputValue(defaultDrowningDate);
+        document.getElementById('drowning-time').value = defaultDrowningDate.time;
+        updateDrowningInputVisibility();
     </script>
 </body>
 </html>

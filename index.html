@@ -163,6 +163,72 @@
             transform: rotate(45deg);
             cursor: copy;
         }
+        .current-icon {
+            width: 28px;
+            height: 18px;
+            display: block;
+            position: relative;
+        }
+        .current-icon::before {
+            content: "";
+            position: absolute;
+            left: 2px;
+            top: 7px;
+            width: 19px;
+            height: 4px;
+            border-radius: 999px;
+            background: #ffbf47;
+        }
+        .current-icon::after {
+            content: "";
+            position: absolute;
+            right: 1px;
+            top: 3px;
+            border-top: 6px solid transparent;
+            border-bottom: 6px solid transparent;
+            border-left: 9px solid #ffbf47;
+        }
+        .lifeguard-data-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background: #2a2a2a;
+            color: #ffbf47;
+            border: 1px solid rgba(255, 191, 71, 0.45);
+        }
+        .lifeguard-data-button:hover { background: #3a2f1d; }
+        .lifeguard-data-button.active {
+            background: rgba(255, 191, 71, 0.16);
+            box-shadow: 0 0 0 2px rgba(255, 191, 71, 0.22);
+        }
+        .lifeguard-current-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 10px;
+            align-items: end;
+        }
+        .lifeguard-current-row.current-open {
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        }
+        .local-current-arrowhead {
+            display: block;
+            width: 18px;
+            height: 18px;
+            background: #ffbf47;
+            clip-path: polygon(50% 0, 100% 100%, 50% 74%, 0 100%);
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+            transform-origin: center;
+        }
+        .local-current-start-dot {
+            display: block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 2px solid #121212;
+            background: #ffbf47;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+        }
         .sr-only {
             position: absolute;
             width: 1px;
@@ -354,6 +420,57 @@
         }
         #status-message { min-height: 18px; font-size: 12px; color: #aaa; }
         #status-message.error { color: #ff7676; }
+        .search-center-marker {
+            background: transparent;
+            border: 0;
+            width: auto !important;
+            height: auto !important;
+        }
+        .search-center-label {
+            position: relative;
+            display: inline-grid;
+            gap: 3px;
+            width: max-content;
+            box-sizing: border-box;
+            padding: 8px 10px;
+            border: 1px solid rgba(0, 255, 204, 0.45);
+            border-radius: 6px;
+            background: rgba(18, 18, 18, 0.86);
+            color: #e6fffb;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.34);
+            font-size: 12px;
+            line-height: 1.25;
+            pointer-events: none;
+        }
+        .search-center-label::before {
+            content: "";
+            position: absolute;
+            left: 10px;
+            bottom: -19px;
+            width: 10px;
+            height: 10px;
+            border: 2px solid #06211f;
+            border-radius: 50%;
+            background: #00ffcc;
+            box-shadow: 0 0 0 2px rgba(0, 255, 204, 0.35);
+        }
+        .search-center-label::after {
+            content: "";
+            position: absolute;
+            left: 15px;
+            bottom: -10px;
+            width: 1px;
+            height: 10px;
+            background: rgba(0, 255, 204, 0.7);
+        }
+        .search-center-label strong {
+            color: #00ffcc;
+            font-size: 11px;
+            text-transform: uppercase;
+        }
+        .search-center-label span {
+            white-space: nowrap;
+        }
         .footer { margin-top: auto; font-size: 11px; color: #666; border-top: 1px solid #333; padding-top: 15px; }
     </style>
 </head>
@@ -385,6 +502,20 @@
                     <span>Points</span>
                     <strong id="polygon-points-value">0</strong>
                 </div>
+            </div>
+        </div>
+        <div id="lifeguard-current-row" class="input-group lifeguard-current-row">
+            <button id="pick-current-button" class="lifeguard-data-button" onclick="toggleLocalCurrentMode()" type="button" aria-label="Draw lifeguard current arrow" title="Draw lifeguard current arrow">
+                <span class="current-icon" aria-hidden="true"></span>
+                <span>Lifeguard Data</span>
+            </button>
+            <div id="local-current-strength-field" class="time-field hidden">
+                <label for="local-current-strength">Strength</label>
+                <select id="local-current-strength" onchange="handleLocalCurrentControlChange()">
+                    <option value="weak">Weak</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="strong">Strong</option>
+                </select>
             </div>
         </div>
         <div class="input-group">
@@ -710,8 +841,13 @@
         let areaPathLayer = null;
         let finalAreaPolygon = null;
         let timeRangeLayer = null;
+        let searchCenterMarker = null;
         let isPickingLocation = false;
         let isDrawingPolygon = false;
+        let isMarkingLocalCurrent = false;
+        let localCurrentStartPoint = null;
+        let localCurrentData = null;
+        let localCurrentLayer = null;
         let selectedPolygon = null;
         let polygonDraftLine = null;
         let polygonVertexMarkers = [];
@@ -755,6 +891,38 @@
             const statusMessage = document.getElementById('status-message');
             statusMessage.textContent = message;
             statusMessage.classList.toggle('error', isError);
+        }
+
+        function setSearchCenterInfo(center) {
+            clearSearchCenterInfo();
+
+            const lat = Number(center.lat);
+            const lon = Number(center.lon);
+            const labelHtml = `
+                <div class="search-center-label" aria-label="Search center coordinates">
+                    <strong>Navigate to<br>search area</strong>
+                    <span>Lat ${lat.toFixed(5)}</span>
+                    <span>Lon ${lon.toFixed(5)}</span>
+                </div>
+            `;
+
+            searchCenterMarker = L.marker([lat, lon], {
+                icon: L.divIcon({
+                    className: 'search-center-marker',
+                    html: labelHtml,
+                    iconSize: null,
+                    iconAnchor: [16, 82]
+                }),
+                interactive: false,
+                zIndexOffset: 900
+            }).addTo(map);
+        }
+
+        function clearSearchCenterInfo() {
+            if (searchCenterMarker) {
+                map.removeLayer(searchCenterMarker);
+                searchCenterMarker = null;
+            }
         }
 
         function setShareSnapshot(snapshot, shareId = null) {
@@ -829,6 +997,8 @@
             document.getElementById('simulate-button').disabled = isDisabled;
             document.getElementById('pick-location-button').disabled = isDisabled;
             document.getElementById('pick-polygon-button').disabled = isDisabled;
+            document.getElementById('pick-current-button').disabled = isDisabled;
+            document.getElementById('local-current-strength').disabled = isDisabled;
             document.getElementById('time-uncertainty-toggle').disabled = isDisabled;
             document.getElementById('range-minutes').disabled = isDisabled;
         }
@@ -931,12 +1101,7 @@
         function setLastSeenMarker(lat, lon, title = 'Last Seen Point', openPopup = true) {
             if (startMarker) map.removeLayer(startMarker);
 
-            startMarker = L.marker([lat, lon]).addTo(map)
-                .bindPopup(`<b>${title}</b><br>Calculating drift vectors...`);
-
-            if (openPopup) {
-                startMarker.openPopup();
-            }
+            startMarker = L.marker([lat, lon], {title}).addTo(map);
         }
 
         function clearAreaResultLayers() {
@@ -959,6 +1124,8 @@
         }
 
         function clearDriftResultLayers() {
+            clearSearchCenterInfo();
+
             if (!isSharedSnapshotMode) {
                 setShareSnapshot(null);
             }
@@ -1004,6 +1171,170 @@
                 Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
 
             return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+        }
+
+        function getBearingDegrees(fromPoint, toPoint) {
+            const lat1 = fromPoint[0] * Math.PI / 180;
+            const lat2 = toPoint[0] * Math.PI / 180;
+            const deltaLon = (toPoint[1] - fromPoint[1]) * Math.PI / 180;
+            const y = Math.sin(deltaLon) * Math.cos(lat2);
+            const x =
+                Math.cos(lat1) * Math.sin(lat2)
+                - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLon);
+
+            return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+        }
+
+        function getLocalCurrentSpeed(strength) {
+            return {
+                weak: 0.2,
+                medium: 0.5,
+                strong: 0.8
+            }[strength] || 0.5;
+        }
+
+        function createLocalCurrentArrowIcon(directionDeg) {
+            return L.divIcon({
+                className: '',
+                html: `<span class="local-current-arrowhead" style="transform: rotate(${directionDeg}deg);"></span>`,
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+        }
+
+        function createLocalCurrentStartIcon() {
+            return L.divIcon({
+                className: '',
+                html: '<span class="local-current-start-dot"></span>',
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+        }
+
+        function setLocalCurrentButtonState(isActive) {
+            const currentButton = document.getElementById('pick-current-button');
+            const currentRow = document.getElementById('lifeguard-current-row');
+            const strengthField = document.getElementById('local-current-strength-field');
+            const shouldShowStrength = isActive || Boolean(localCurrentData);
+
+            currentButton.classList.toggle('active', isActive);
+            currentRow.classList.toggle('current-open', shouldShowStrength);
+            strengthField.classList.toggle('hidden', !shouldShowStrength);
+            currentButton.setAttribute('aria-label', isActive ? 'Click map to mark current direction' : 'Draw lifeguard current arrow');
+            currentButton.title = isActive ? 'Click map to mark current direction' : 'Draw lifeguard current arrow';
+        }
+
+        function updateLocalCurrentInfo() {
+            if (!localCurrentData) {
+                return;
+            }
+        }
+
+        function drawLocalCurrentArrow(startPoint, endPoint, directionDeg) {
+            if (localCurrentLayer) {
+                map.removeLayer(localCurrentLayer);
+                localCurrentLayer = null;
+            }
+
+            localCurrentLayer = L.layerGroup().addTo(map);
+            L.polyline([startPoint, endPoint], {
+                color: '#ffbf47',
+                weight: 4,
+                opacity: 0.95,
+                dashArray: '8, 6'
+            }).addTo(localCurrentLayer).bindPopup('<b>Lifeguard local current</b><br>Observed field current override.');
+            L.marker(startPoint, {icon: createLocalCurrentStartIcon(), interactive: false}).addTo(localCurrentLayer);
+            L.marker(endPoint, {icon: createLocalCurrentArrowIcon(directionDeg), interactive: false}).addTo(localCurrentLayer);
+        }
+
+        function setLocalCurrentFromPoints(startPoint, endPoint) {
+            const directionDeg = getBearingDegrees(startPoint, endPoint);
+            localCurrentData = {
+                start: {lat: startPoint[0], lon: startPoint[1]},
+                end: {lat: endPoint[0], lon: endPoint[1]},
+                directionDeg
+            };
+
+            drawLocalCurrentArrow(startPoint, endPoint, directionDeg);
+            updateLocalCurrentInfo();
+            clearDriftResultLayers();
+            setStatus('Local lifeguard current added. Recalculate when ready.');
+        }
+
+        function clearLocalCurrent() {
+            if (localCurrentLayer) {
+                map.removeLayer(localCurrentLayer);
+                localCurrentLayer = null;
+            }
+
+            localCurrentData = null;
+            localCurrentStartPoint = null;
+            isMarkingLocalCurrent = false;
+            setLocalCurrentButtonState(false);
+            map.getContainer().style.cursor = '';
+            updateLocalCurrentInfo();
+            clearDriftResultLayers();
+            setStatus('Local lifeguard current cleared.');
+        }
+
+        function startLocalCurrentMode() {
+            if (isPickingLocation) {
+                setPickLocationMode(false);
+            }
+
+            if (isDrawingPolygon) {
+                cancelPolygonDrawing(false);
+            }
+
+            isMarkingLocalCurrent = true;
+            localCurrentStartPoint = null;
+            setLocalCurrentButtonState(true);
+            updateLocalCurrentInfo();
+            map.getContainer().style.cursor = 'crosshair';
+            setStatus('Click where the local current starts, then click where it flows.');
+        }
+
+        function finishLocalCurrentMode() {
+            isMarkingLocalCurrent = false;
+            localCurrentStartPoint = null;
+            setLocalCurrentButtonState(false);
+            updateLocalCurrentInfo();
+            map.getContainer().style.cursor = '';
+        }
+
+        function toggleLocalCurrentMode() {
+            if (isMarkingLocalCurrent) {
+                finishLocalCurrentMode();
+                setStatus('Ready');
+                return;
+            }
+
+            startLocalCurrentMode();
+        }
+
+        function handleLocalCurrentControlChange() {
+            updateLocalCurrentInfo();
+
+            if (localCurrentData) {
+                clearDriftResultLayers();
+                setStatus('Local current settings changed. Recalculate when ready.');
+            }
+        }
+
+        function getLocalCurrentPayload() {
+            if (!localCurrentData) return null;
+
+            const strength = document.getElementById('local-current-strength').value;
+            const duration = 'first_hour';
+
+            return {
+                directionDeg: Number(localCurrentData.directionDeg.toFixed(2)),
+                strength,
+                duration,
+                speedMps: getLocalCurrentSpeed(strength),
+                start: localCurrentData.start,
+                end: localCurrentData.end
+            };
         }
 
         function getPolygonAreaSqMeters(points) {
@@ -1207,6 +1538,10 @@
                 cancelPolygonDrawing(false);
             }
 
+            if (isPickingLocation && isMarkingLocalCurrent) {
+                finishLocalCurrentMode();
+            }
+
             pickButton.classList.toggle('active', isPickingLocation);
             pickButton.setAttribute('aria-label', isPickingLocation ? 'Click map to pick location' : 'Pick location from map');
             pickButton.title = isPickingLocation ? 'Click map to pick location' : 'Pick location from map';
@@ -1247,6 +1582,10 @@
         function startPolygonDrawing() {
             if (isPickingLocation) {
                 setPickLocationMode(false);
+            }
+
+            if (isMarkingLocalCurrent) {
+                finishLocalCurrentMode();
             }
 
             clearPolygonSelection();
@@ -1663,18 +2002,24 @@
             return drowningDate;
         }
 
-        function createSimulationParams(lat, lon, polygonPayload) {
+        function createSimulationParams(lat, lon, polygonPayload, localCurrentPayload = null) {
             const params = new URLSearchParams({lat, lon});
 
             if (polygonPayload) {
                 params.set('polygon', JSON.stringify(polygonPayload));
             }
 
+            if (localCurrentPayload) {
+                params.set('local_current_direction_deg', localCurrentPayload.directionDeg);
+                params.set('local_current_strength', localCurrentPayload.strength);
+                params.set('local_current_duration', localCurrentPayload.duration);
+            }
+
             return params;
         }
 
-        function createElapsedSimulationParams(lat, lon, elapsedHours, polygonPayload) {
-            const params = createSimulationParams(lat, lon, polygonPayload);
+        function createElapsedSimulationParams(lat, lon, elapsedHours, polygonPayload, localCurrentPayload = null) {
+            const params = createSimulationParams(lat, lon, polygonPayload, localCurrentPayload);
             params.set('hours', Number(elapsedHours.toFixed(4)));
             return params;
         }
@@ -1697,7 +2042,8 @@
         function buildSimulationParams(lat, lon) {
             const mode = document.getElementById('drowning-mode').value;
             const polygonPayload = getSelectedPolygonPayload();
-            const params = createSimulationParams(lat, lon, polygonPayload);
+            const localCurrentPayload = getLocalCurrentPayload();
+            const params = createSimulationParams(lat, lon, polygonPayload, localCurrentPayload);
             let elapsedHours = 0;
 
             if (mode === 'elapsed') {
@@ -1741,20 +2087,20 @@
                 rangeRequests = [
                     {
                         label: 'Latest possible time',
-                        params: createElapsedSimulationParams(lat, lon, latestElapsedHours, polygonPayload),
+                        params: createElapsedSimulationParams(lat, lon, latestElapsedHours, polygonPayload, localCurrentPayload),
                         elapsedHours: latestElapsedHours,
                         color: '#58a6ff'
                     },
                     {
                         label: 'Earliest possible time',
-                        params: createElapsedSimulationParams(lat, lon, earliestElapsedHours, polygonPayload),
+                        params: createElapsedSimulationParams(lat, lon, earliestElapsedHours, polygonPayload, localCurrentPayload),
                         elapsedHours: earliestElapsedHours,
                         color: '#ff5db8'
                     }
                 ];
             }
 
-            return {params, elapsedHours, uncertaintyHours, rangeRequests};
+            return {params, elapsedHours, uncertaintyHours, rangeRequests, localCurrent: localCurrentPayload};
         }
 
         async function requestSimulation(params) {
@@ -1766,6 +2112,44 @@
             }
 
             return result;
+        }
+
+        function smoothPathPoints(points, segmentsPerPair = 8) {
+            if (!Array.isArray(points) || points.length < 3) {
+                return points;
+            }
+
+            const smoothed = [];
+
+            for (let index = 0; index < points.length - 1; index++) {
+                const previous = points[Math.max(0, index - 1)];
+                const current = points[index];
+                const next = points[index + 1];
+                const afterNext = points[Math.min(points.length - 1, index + 2)];
+
+                for (let segment = 0; segment < segmentsPerPair; segment++) {
+                    const t = segment / segmentsPerPair;
+                    const t2 = t * t;
+                    const t3 = t2 * t;
+                    const lat = 0.5 * (
+                        2 * current[0]
+                        + (-previous[0] + next[0]) * t
+                        + (2 * previous[0] - 5 * current[0] + 4 * next[0] - afterNext[0]) * t2
+                        + (-previous[0] + 3 * current[0] - 3 * next[0] + afterNext[0]) * t3
+                    );
+                    const lon = 0.5 * (
+                        2 * current[1]
+                        + (-previous[1] + next[1]) * t
+                        + (2 * previous[1] - 5 * current[1] + 4 * next[1] - afterNext[1]) * t2
+                        + (-previous[1] + 3 * current[1] - 3 * next[1] + afterNext[1]) * t3
+                    );
+
+                    smoothed.push([lat, lon]);
+                }
+            }
+
+            smoothed.push(points[points.length - 1]);
+            return smoothed;
         }
 
         function drawTimeRangeResults(rangeResults, heatPoints) {
@@ -1782,9 +2166,10 @@
 
                 const trajectory = result.trajectory;
                 const latLngs = trajectory.map(point => [point.lat, point.lon]);
+                const smoothLatLngs = smoothPathPoints(latLngs);
                 const finalPoint = latLngs[latLngs.length - 1];
 
-                L.polyline(latLngs, {
+                L.polyline(smoothLatLngs, {
                     color: request.color,
                     weight: 3,
                     opacity: 0.82,
@@ -1799,9 +2184,10 @@
 
                     result.area_trajectories.forEach(area => {
                         const areaLatLngs = area.trajectory.map(point => [point.lat, point.lon]);
+                        const smoothAreaLatLngs = smoothPathPoints(areaLatLngs);
 
                         if (areaLatLngs.length > 1) {
-                            L.polyline(areaLatLngs, {
+                            L.polyline(smoothAreaLatLngs, {
                                 color: request.color,
                                 weight: 2,
                                 opacity: 0.55,
@@ -1855,7 +2241,8 @@
                 age: document.getElementById('age').value,
                 elapsedHours: Number(simulationInput.elapsedHours.toFixed(4)),
                 uncertaintyHours: Number(simulationInput.uncertaintyHours.toFixed(4)),
-                polygon: getSelectedPolygonPayload()
+                polygon: getSelectedPolygonPayload(),
+                localCurrent: simulationInput.localCurrent
             };
 
             if (mode === 'elapsed') {
@@ -1886,18 +2273,20 @@
 
             const trajectory = result.trajectory;
             const latLngs = trajectory.map(p => [p.lat, p.lon]);
+            const smoothLatLngs = smoothPathPoints(latLngs);
             let finalAreaPoints = [];
 
-            pathLine = L.polyline(latLngs, {color: '#00ffcc', weight: 4, dashArray: '6, 8'}).addTo(map);
+            pathLine = L.polyline(smoothLatLngs, {color: '#00ffcc', weight: 4, dashArray: '6, 8'}).addTo(map);
 
             if (Array.isArray(result.area_trajectories) && result.area_trajectories.length > 0) {
                 areaPathLayer = L.layerGroup().addTo(map);
 
                 result.area_trajectories.forEach(area => {
                     const areaLatLngs = area.trajectory.map(p => [p.lat, p.lon]);
+                    const smoothAreaLatLngs = smoothPathPoints(areaLatLngs);
 
                     if (areaLatLngs.length > 1) {
-                        L.polyline(areaLatLngs, {
+                        L.polyline(smoothAreaLatLngs, {
                             color: '#ffbf47',
                             weight: 2,
                             opacity: 0.75,
@@ -1945,10 +2334,18 @@
             }).addTo(map);
 
             const allBoundsPoints = latLngs.concat(finalAreaPoints, rangeBoundsPoints);
+            const finalPoint = latLngs[latLngs.length - 1];
+            const searchCenterPoints = finalAreaPoints.length >= 3
+                ? finalAreaPoints
+                : [finalPoint].concat(rangeBoundsPoints);
+            const searchCenterLatLng = searchCenterPoints.length > 1
+                ? L.latLngBounds(searchCenterPoints).getCenter()
+                : L.latLng(finalPoint);
             const uncertaintyText = uncertaintyHours > 0
                 ? ` +/- ${formatDurationHours(uncertaintyHours)}`
                 : '';
-            const resultStatusText = statusText || `Calculated ${result.hours_simulated} hours${uncertaintyText} from ${result.data_source_used}.`;
+            const localCurrentText = result.local_current_used ? ' + lifeguard current' : '';
+            const resultStatusText = statusText || `Calculated ${result.hours_simulated} hours${uncertaintyText} from ${result.data_source_used}${localCurrentText}.`;
 
             if (finalAreaPoints.length >= 3 || rangeBoundsPoints.length > 0) {
                 map.fitBounds(L.latLngBounds(allBoundsPoints).pad(0.18));
@@ -1956,6 +2353,9 @@
                 map.panTo([trajectory[trajectory.length - 1].lat, trajectory[trajectory.length - 1].lon]);
             }
 
+            setSearchCenterInfo(
+                {lat: searchCenterLatLng.lat, lon: searchCenterLatLng.lng}
+            );
             setStatus(resultStatusText);
             return {statusText: resultStatusText};
         }
@@ -1969,11 +2369,12 @@
             });
 
             [
-                'simulate-button',
-                'pick-location-button',
-                'pick-polygon-button',
-                'time-uncertainty-toggle'
-            ].forEach(id => {
+            'simulate-button',
+            'pick-location-button',
+            'pick-polygon-button',
+            'pick-current-button',
+            'time-uncertainty-toggle'
+        ].forEach(id => {
                 const element = document.getElementById(id);
                 if (element) {
                     element.disabled = isEnabled;
@@ -2022,6 +2423,33 @@
                 document.getElementById('range-minutes').value = Math.round(input.uncertaintyHours * 60);
             } else {
                 setTimeUncertaintyEnabled(false);
+            }
+
+            if (input.localCurrent) {
+                document.getElementById('local-current-strength').value = input.localCurrent.strength || 'medium';
+                localCurrentData = {
+                    start: input.localCurrent.start,
+                    end: input.localCurrent.end,
+                    directionDeg: Number(input.localCurrent.directionDeg)
+                };
+
+                if (localCurrentData.start && localCurrentData.end && Number.isFinite(localCurrentData.directionDeg)) {
+                    drawLocalCurrentArrow(
+                        [localCurrentData.start.lat, localCurrentData.start.lon],
+                        [localCurrentData.end.lat, localCurrentData.end.lon],
+                        localCurrentData.directionDeg
+                    );
+                    setLocalCurrentButtonState(false);
+                    updateLocalCurrentInfo();
+                }
+            } else {
+                localCurrentData = null;
+                if (localCurrentLayer) {
+                    map.removeLayer(localCurrentLayer);
+                    localCurrentLayer = null;
+                }
+                setLocalCurrentButtonState(false);
+                updateLocalCurrentInfo();
             }
 
             clearPolygonSelection();
@@ -2081,6 +2509,21 @@
         map.on('click', function(e) {
             const clickedLat = e.latlng.lat;
             const clickedLng = e.latlng.lng;
+
+            if (isMarkingLocalCurrent) {
+                const clickedPoint = [clickedLat, clickedLng];
+
+                if (!localCurrentStartPoint) {
+                    localCurrentStartPoint = clickedPoint;
+                    updateLocalCurrentInfo();
+                    setStatus('Now click where the local current flows.');
+                    return;
+                }
+
+                setLocalCurrentFromPoints(localCurrentStartPoint, clickedPoint);
+                finishLocalCurrentMode();
+                return;
+            }
 
             if (isDrawingPolygon) {
                 addPolygonPoint(clickedLat, clickedLng);

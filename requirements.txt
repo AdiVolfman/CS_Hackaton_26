@@ -4,3 +4,7 @@ copernicusmarine
 pandas
 numpy
 requests
+opendrift
+xarray
+shapely
+netCDF4

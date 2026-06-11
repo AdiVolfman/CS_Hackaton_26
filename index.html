@@ -2153,71 +2153,11 @@
         }
 
         function drawTimeRangeResults(rangeResults, heatPoints) {
-            const rangeBoundsPoints = [];
-
-            if (rangeResults.length === 0) {
-                return rangeBoundsPoints;
-            }
-
-            timeRangeLayer = L.layerGroup().addTo(map);
-
-            rangeResults.forEach(({request, result}) => {
-                if (!result || result.status !== 'success' || result.trajectory.length <= 1) return;
-
-                const trajectory = result.trajectory;
-                const latLngs = trajectory.map(point => [point.lat, point.lon]);
-                const smoothLatLngs = smoothPathPoints(latLngs);
-                const finalPoint = latLngs[latLngs.length - 1];
-
-                L.polyline(smoothLatLngs, {
-                    color: request.color,
-                    weight: 3,
-                    opacity: 0.82,
-                    dashArray: '10, 8'
-                }).addTo(timeRangeLayer).bindPopup(`<b>${request.label}</b><br>${result.hours_simulated} hours simulated.`);
-
-                rangeBoundsPoints.push(finalPoint);
-                heatPoints.push([finalPoint[0], finalPoint[1], 0.85]);
-
-                if (Array.isArray(result.area_trajectories) && result.area_trajectories.length > 0) {
-                    const finalAreaPoints = [];
-
-                    result.area_trajectories.forEach(area => {
-                        const areaLatLngs = area.trajectory.map(point => [point.lat, point.lon]);
-                        const smoothAreaLatLngs = smoothPathPoints(areaLatLngs);
-
-                        if (areaLatLngs.length > 1) {
-                            L.polyline(smoothAreaLatLngs, {
-                                color: request.color,
-                                weight: 2,
-                                opacity: 0.55,
-                                dashArray: '3, 7'
-                            }).addTo(timeRangeLayer);
-                        }
-
-                        if (areaLatLngs.length > 0) {
-                            finalAreaPoints.push(areaLatLngs[areaLatLngs.length - 1]);
-                        }
-                    });
-
-                    if (finalAreaPoints.length >= 3) {
-                        L.polygon(finalAreaPoints, {
-                            color: request.color,
-                            weight: 2,
-                            opacity: 0.8,
-                            fillColor: request.color,
-                            fillOpacity: 0.12
-                        }).addTo(timeRangeLayer).bindPopup(`<b>${request.label}</b><br>Time range area.`);
-                    }
-
-                    finalAreaPoints.forEach(point => {
-                        rangeBoundsPoints.push(point);
-                        heatPoints.push([point[0], point[1], 0.72]);
-                    });
-                }
-            });
-
-            return rangeBoundsPoints;
+            // Time-uncertainty range overlay was based on multi-call deterministic trajectories.
+            // The OpenDrift backend now produces a single particle ensemble per call, so per-call
+            // overlays are not drawn. Time uncertainty should be modelled by widening the
+            // simulation window on the backend (entry_window) — TODO: thread that through.
+            return [];
         }
 
         function serializeRangeResults(rangeResults) {
@@ -2255,27 +2195,6 @@
                 input.drowningMonth = document.getElementById('drowning-month').value;
                 input.drowningYear = document.getElementById('drowning-year').value;
             }
-            if (!isPickingLocation) return;
-
-            // Update the UI inputs so the user sees the exact coordinates
-            document.getElementById('lat').value = clickedLat.toFixed(4);
-            document.getElementById('lon').value = clickedLng.toFixed(4);
-
-            // Draw or move the visual Red Pin on the map instantly
-            clearPolygonSelection();
-            clearAreaResultLayers();
-            setLastSeenMarker(clickedLat, clickedLng);
-            setPickLocationMode(false);
-        });
-
-        async function triggerSimulation() {
-            try {
-                if (isDrawingPolygon) {
-                    if (!selectedPolygon || polygonPoints.length < 3) {
-                        throw new Error('Finish the polygon first, or add at least 3 points.');
-                    }
-                    finishPolygonSelection();
-                }
 
             return {
                 version: 1,
@@ -2286,150 +2205,55 @@
                 statusText
             };
         }
-                const {lat, lon} = getSelectedPosition();
-
-                // Time window from the existing UI: median entry time + uncertainty.
-                const mode = document.getElementById('drowning-mode').value;
-                let medianEntryMs;
-                if (mode === 'elapsed') {
-                    const days = Number(document.getElementById('days').value) || 0;
-                    const hours = Number(document.getElementById('hours').value) || 0;
-                    const minutes = Number(document.getElementById('minutes').value) || 0;
-                    medianEntryMs = Date.now() - ((days * 24 + hours) * 3600 + minutes * 60) * 1000;
-                } else {
-                    medianEntryMs = buildDateFromManualInputs().getTime();
-                }
-                if (!Number.isFinite(medianEntryMs) || medianEntryMs >= Date.now()) {
-                    throw new Error('Drowning time must be in the past.');
-                }
 
         function renderSimulationResult(result, rangeResults, elapsedHours, uncertaintyHours, statusText = null) {
-            if (result.status !== "success" || result.trajectory.length <= 1) {
+            if (result.status !== "success" || !Array.isArray(result.heatmap) || result.heatmap.length === 0) {
                 return null;
             }
 
-            const trajectory = result.trajectory;
-            const latLngs = trajectory.map(p => [p.lat, p.lon]);
-            const smoothLatLngs = smoothPathPoints(latLngs);
-            let finalAreaPoints = [];
-
-            pathLine = L.polyline(smoothLatLngs, {color: '#00ffcc', weight: 4, dashArray: '6, 8'}).addTo(map);
-
-            if (Array.isArray(result.area_trajectories) && result.area_trajectories.length > 0) {
-                areaPathLayer = L.layerGroup().addTo(map);
-
-                result.area_trajectories.forEach(area => {
-                    const areaLatLngs = area.trajectory.map(p => [p.lat, p.lon]);
-                    const smoothAreaLatLngs = smoothPathPoints(areaLatLngs);
-                const uncertaintyHours = (typeof getTimeUncertaintyHours === 'function') ? getTimeUncertaintyHours() : 0;
-                const halfWindowMs = Math.max(uncertaintyHours, 0.05) * 3600 * 1000;
-                const windowStart = new Date(medianEntryMs - halfWindowMs);
-                let windowEnd = new Date(medianEntryMs + halfWindowMs);
-                if (windowEnd.getTime() >= Date.now()) windowEnd = new Date(Date.now() - 1000);
-                const forecastTime = new Date();
-
-                if (isPickingLocation) setPickLocationMode(false);
-                clearDriftResultLayers();
-                setLastSeenMarker(lat, lon);
-                setLoading(true);
-                setStatus('Running OpenDrift Leeway simulation (downloading currents + wind)...');
-
-                    if (areaLatLngs.length > 1) {
-                        L.polyline(smoothAreaLatLngs, {
-                            color: '#ffbf47',
-                            weight: 2,
-                            opacity: 0.75,
-                            dashArray: '3, 6'
-                        }).addTo(areaPathLayer);
-                    }
-                // Build the request body.
-                const polygonPayload = (typeof getSelectedPolygonPayload === 'function')
-                    ? getSelectedPolygonPayload()
-                    : null;
-                const body = {
-                    entry_window_start: windowStart.toISOString(),
-                    entry_window_end: windowEnd.toISOString(),
-                    forecast_time: forecastTime.toISOString(),
-                    n_particles: 1000
-                };
-                if (polygonPayload && polygonPayload.length >= 3) {
-                    body.polygon = polygonPayload;
-                } else {
-                    body.point = {lat, lon};
-                    body.point_radius_m = 150;
-                }
-
-                    if (areaLatLngs.length > 0) {
-                        finalAreaPoints.push(areaLatLngs[areaLatLngs.length - 1]);
-                    }
-                });
-
-                if (finalAreaPoints.length >= 3) {
-                    finalAreaPolygon = L.polygon(finalAreaPoints, {
-                        color: '#ffbf47',
-                        weight: 3,
-                        fillColor: '#ffbf47',
-                        fillOpacity: 0.2
-                    }).addTo(map).bindPopup('<b>Predicted Area</b><br>Polygon drift projection.');
-                }
-            }
-                const response = await fetch(`${API_BASE_URL}/simulate`, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(body)
-                });
-                const result = await response.json();
-                if (!response.ok) {
-                    throw new Error(result.detail || 'Simulation failed.');
-                }
-
-            let heatPoints = [];
-            trajectory.forEach((point, index) => {
-                let intensity = index === trajectory.length - 1 ? 1.0 : 0.3;
-                heatPoints.push([point.lat, point.lon, intensity]);
-
-                if (index === trajectory.length - 1) {
-                    for (let i = 0; i < 40; i++) {
-                        let dispersion = 0.0025 * elapsedHours;
-                        let randomLat = point.lat + (Math.random() - 0.5) * dispersion;
-                        let randomLon = point.lon + (Math.random() - 0.5) * dispersion;
-                        heatPoints.push([randomLat, randomLon, 0.65]);
-                    }
-                }
-            });
-            finalAreaPoints.forEach(point => heatPoints.push([point[0], point[1], 0.8]));
-            const rangeBoundsPoints = drawTimeRangeResults(rangeResults, heatPoints);
-
-            heatLayer = L.heatLayer(heatPoints, {
-                radius: 28,
-                blur: 14,
-                maxZoom: 12,
-                gradient: {0.3: 'blue', 0.6: 'lime', 1: 'red'}
+            heatLayer = L.heatLayer(result.heatmap, {
+                radius: 26,
+                blur: 18,
+                maxZoom: 13,
+                gradient: {0.2: '#1c3eff', 0.5: '#00ffcc', 0.8: '#ffbf47', 1: '#ff4b45'}
             }).addTo(map);
 
-            const allBoundsPoints = latLngs.concat(finalAreaPoints, rangeBoundsPoints);
-            const finalPoint = latLngs[latLngs.length - 1];
-            const searchCenterPoints = finalAreaPoints.length >= 3
-                ? finalAreaPoints
-                : [finalPoint].concat(rangeBoundsPoints);
-            const searchCenterLatLng = searchCenterPoints.length > 1
-                ? L.latLngBounds(searchCenterPoints).getCenter()
-                : L.latLng(finalPoint);
+            const bbox = result.bbox;
+            const heatLatLngs = result.heatmap.map(p => [p[0], p[1]]);
+            const polygonLatLngs = Array.isArray(result.polygon)
+                ? result.polygon.map(p => [p.lat, p.lon])
+                : [];
+
+            if (polygonLatLngs.length >= 3) {
+                finalAreaPolygon = L.polygon(polygonLatLngs, {
+                    color: '#ffbf47',
+                    weight: 3,
+                    fillColor: '#ffbf47',
+                    fillOpacity: 0.15
+                }).addTo(map).bindPopup('<b>Search area</b><br>Particles seeded uniformly inside.');
+            }
+
+            if (bbox) {
+                map.fitBounds(
+                    [[bbox.min_lat, bbox.min_lon], [bbox.max_lat, bbox.max_lon]],
+                    {padding: [40, 40]}
+                );
+            } else if (heatLatLngs.length > 0) {
+                map.fitBounds(L.latLngBounds(heatLatLngs).pad(0.18));
+            }
+
+            const centerLat = bbox ? 0.5 * (bbox.min_lat + bbox.max_lat) : (result.origin && result.origin.lat);
+            const centerLon = bbox ? 0.5 * (bbox.min_lon + bbox.max_lon) : (result.origin && result.origin.lon);
+            if (Number.isFinite(centerLat) && Number.isFinite(centerLon)) {
+                setSearchCenterInfo({lat: centerLat, lon: centerLon});
+            }
+
             const uncertaintyText = uncertaintyHours > 0
                 ? ` +/- ${formatDurationHours(uncertaintyHours)}`
                 : '';
-            const localCurrentText = result.local_current_used ? ' + lifeguard current' : '';
-            const resultStatusText = statusText || `Calculated ${result.hours_simulated} hours${uncertaintyText} from ${result.data_source_used}${localCurrentText}.`;
-
-            if (finalAreaPoints.length >= 3 || rangeBoundsPoints.length > 0) {
-                map.fitBounds(L.latLngBounds(allBoundsPoints).pad(0.18));
-            } else {
-                map.panTo([trajectory[trajectory.length - 1].lat, trajectory[trajectory.length - 1].lon]);
-            }
-
-            setSearchCenterInfo(
-                {lat: searchCenterLatLng.lat, lon: searchCenterLatLng.lng}
-            );
+            const particlesText = Number.isFinite(result.n_particles) ? ` | ${result.n_particles} particles` : '';
+            const resultStatusText = statusText
+                || `Calculated ${result.hours_simulated} hours${uncertaintyText} from ${result.data_source_used}${particlesText}.`;
             setStatus(resultStatusText);
             return {statusText: resultStatusText};
         }
@@ -2605,11 +2429,11 @@
             }
 
             if (!isPickingLocation) return;
-
+            
             // Update the UI inputs so the user sees the exact coordinates
             document.getElementById('lat').value = clickedLat.toFixed(4);
             document.getElementById('lon').value = clickedLng.toFixed(4);
-
+            
             // Draw or move the visual Red Pin on the map instantly
             clearPolygonSelection();
             clearAreaResultLayers();
@@ -2672,25 +2496,9 @@
                         rangeResults,
                         renderedResult.statusText
                     ));
-                if (Array.isArray(result.heatmap) && result.heatmap.length > 0) {
-                    heatLayer = L.heatLayer(result.heatmap, {
-                        radius: 26, blur: 18, maxZoom: 13,
-                        gradient: {0.2: '#1c3eff', 0.5: '#00ffcc', 0.8: '#ffbf47', 1: '#ff4b45'}
-                    }).addTo(map);
                 }
-
-                if (result.bbox) {
-                    map.fitBounds([
-                        [result.bbox.min_lat, result.bbox.min_lon],
-                        [result.bbox.max_lat, result.bbox.max_lon]
-                    ], {padding: [40, 40]});
-                }
-
-                setStatus(
-                    `${result.n_particles} particles | currents: ${result.currents_source} | wind: ${result.winds_source}`
-                );
             } catch (error) {
-                console.error('Simulation error:', error);
+                console.error("API Connection Error:", error);
                 setStatus(error.message, true);
             } finally {
                 setLoading(false);

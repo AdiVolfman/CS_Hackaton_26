@@ -12,15 +12,10 @@ import numpy as np
 from fetch_current import CopernicusFetcher, KinneretFetcher, is_kinneret
 from simulation_window import resolve_simulation_window
 from share_store import router as share_router
+from local_current import parse_local_current, get_local_current_vector
 
 app = FastAPI(title="SafeCurrent - Search & Rescue API")
 app.include_router(share_router)
-LOCAL_CURRENT_SPEEDS = {
-    "weak": 0.2,
-    "medium": 0.5,
-    "strong": 0.8,
-}
-LOCAL_CURRENT_DURATIONS = {"first_hour", "all"}
 
 # CRITICAL FOR HACKATHON: Allows your Frontend (React/Vue/HTML) to talk to this Backend without CORS blocks
 app.add_middleware(
@@ -88,8 +83,8 @@ def calculate_next_position(current_lat, current_lon, target_time, df, hour_inde
     if pd.isna(uo) or pd.isna(vo):
         return current_lat, current_lon
 
-    # Israeli rip current — sea only, first hour only
-    rip_push = -0.75 if hour_index == 0 and source.startswith("copernicus") else 0.0
+    # Israeli rip current — sea only, first hour only, skipped when lifeguard provided a local override
+    rip_push = -0.75 if hour_index == 0 and source.startswith("copernicus") and local_current is None else 0.0
     local_uo, local_vo = get_local_current_vector(local_current, hour_index)
     total_uo = uo + rip_push + local_uo
     total_vo = vo + local_vo
@@ -102,48 +97,6 @@ def calculate_next_position(current_lat, current_lon, target_time, df, hour_inde
     delta_lon = (total_uo * elapsed_seconds) / meters_per_degree_lon
 
     return current_lat + delta_lat, current_lon + delta_lon
-
-def parse_local_current(direction_deg, strength, duration):
-    if direction_deg is None and strength is None and duration is None:
-        return None
-
-    if direction_deg is None:
-        raise HTTPException(status_code=400, detail="Local current direction is required.")
-
-    try:
-        normalized_direction = float(direction_deg) % 360
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail="Local current direction must be a number.")
-
-    strength_key = (strength or "medium").lower()
-    duration_key = (duration or "first_hour").lower()
-
-    if strength_key not in LOCAL_CURRENT_SPEEDS:
-        raise HTTPException(status_code=400, detail="Local current strength must be weak, medium, or strong.")
-
-    if duration_key not in LOCAL_CURRENT_DURATIONS:
-        raise HTTPException(status_code=400, detail="Local current duration must be first_hour or all.")
-
-    speed_mps = LOCAL_CURRENT_SPEEDS[strength_key]
-    direction_radians = np.radians(normalized_direction)
-
-    return {
-        "direction_deg": normalized_direction,
-        "strength": strength_key,
-        "duration": duration_key,
-        "speed_mps": speed_mps,
-        "uo": float(speed_mps * np.sin(direction_radians)),
-        "vo": float(speed_mps * np.cos(direction_radians)),
-    }
-
-def get_local_current_vector(local_current, hour_index):
-    if not local_current:
-        return 0.0, 0.0
-
-    if local_current["duration"] == "first_hour" and hour_index > 0:
-        return 0.0, 0.0
-
-    return local_current["uo"], local_current["vo"]
 
 def parse_polygon_points(polygon):
     if polygon is None:

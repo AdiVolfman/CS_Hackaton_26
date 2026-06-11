@@ -1,8 +1,10 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 import datetime
 import json
 import pathlib
+import secrets
 import threading
 from typing import Optional
 import pandas as pd
@@ -13,6 +15,8 @@ from fetch_current import CopernicusFetcher
 app = FastAPI(title="SafeCurrent - Search & Rescue API")
 MAX_SIMULATION_DAYS = 7
 MAX_SIMULATION_HOURS = MAX_SIMULATION_DAYS * 24
+SHARE_STORE_PATH = pathlib.Path(__file__).resolve().parent / ".shared_snapshots.json"
+share_store_lock = threading.Lock()
 
 # CRITICAL FOR HACKATHON: Allows your Frontend (React/Vue/HTML) to talk to this Backend without CORS blocks
 app.add_middleware(
@@ -22,6 +26,68 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/")
+@app.get("/index.html")
+def serve_frontend():
+    index_path = pathlib.Path(__file__).resolve().parent / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="index.html not found")
+    return FileResponse(index_path)
+
+def load_share_store():
+    if not SHARE_STORE_PATH.exists():
+        return {}
+
+    try:
+        with SHARE_STORE_PATH.open("r", encoding="utf-8") as store_file:
+            data = json.load(store_file)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+    return data if isinstance(data, dict) else {}
+
+def save_share_store(store):
+    with SHARE_STORE_PATH.open("w", encoding="utf-8") as store_file:
+        json.dump(store, store_file, separators=(",", ":"))
+
+@app.post("/share")
+def create_share_snapshot(snapshot: dict = Body(...)):
+    if not isinstance(snapshot, dict):
+        raise HTTPException(status_code=400, detail="Share snapshot must be an object.")
+
+    snapshot_id = secrets.token_urlsafe(8)
+    created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    with share_store_lock:
+        store = load_share_store()
+        store[snapshot_id] = {
+            "created_at": created_at,
+            "snapshot": snapshot,
+        }
+
+        if len(store) > 200:
+            oldest_ids = sorted(
+                store,
+                key=lambda key: store[key].get("created_at", "")
+            )[:-200]
+            for old_id in oldest_ids:
+                store.pop(old_id, None)
+
+        save_share_store(store)
+
+    return {"share_id": snapshot_id}
+
+@app.get("/share/{snapshot_id}")
+def get_share_snapshot(snapshot_id: str):
+    with share_store_lock:
+        store = load_share_store()
+
+    record = store.get(snapshot_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Shared result not found.")
+
+    return record.get("snapshot", {})
 
 @app.on_event("startup")
 def print_frontend_url():
@@ -55,16 +121,27 @@ def calculate_next_position(current_lat, current_lon, target_time, df, hour_inde
     valid = hourly_df.dropna(subset=["uo", "vo"])
     if valid.empty:
         return current_lat, current_lon
+    
+    if source == "copernicus":
+        hourly_df = hourly_df.dropna(subset=['latitude', 'longitude', 'uo', 'vo'])
+        if hourly_df.empty:
+            return current_lat, current_lon
 
-    distances = np.sqrt(
-        (valid['latitude'] - current_lat) ** 2
-        + (valid['longitude'] - current_lon) ** 2
-    )
-    closest_row = valid.loc[distances.idxmin()]
+        distances = np.sqrt((hourly_df['latitude'] - current_lat)**2 + (hourly_df['longitude'] - current_lon)**2)
+        closest_row = hourly_df.loc[distances.idxmin()]
+    else:
+        hourly_df = hourly_df.dropna(subset=['uo', 'vo'])
+        if hourly_df.empty:
+            return current_lat, current_lon
 
+        closest_row = hourly_df.iloc[0]
+        
     uo = closest_row['uo']
     vo = closest_row['vo']
 
+    if pd.isna(uo) or pd.isna(vo):
+        return current_lat, current_lon
+    
     # Israeli Rip Current Logic (First hour push Westward)
     rip_push = -0.75 if hour_index == 0 else 0.0
     total_uo = uo + rip_push

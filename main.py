@@ -1,22 +1,20 @@
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import datetime
 import json
 import pathlib
-import secrets
 import threading
 from typing import Optional
 import pandas as pd
 import numpy as np
 
 from fetch_current import CopernicusFetcher, KinneretFetcher, is_kinneret
+from simulation_window import resolve_simulation_window
+from share_store import router as share_router
 
 app = FastAPI(title="SafeCurrent - Search & Rescue API")
-MAX_SIMULATION_DAYS = 7
-MAX_SIMULATION_HOURS = MAX_SIMULATION_DAYS * 24
-SHARE_STORE_PATH = pathlib.Path(__file__).resolve().parent / ".shared_snapshots.json"
-share_store_lock = threading.Lock()
+app.include_router(share_router)
 
 # CRITICAL FOR HACKATHON: Allows your Frontend (React/Vue/HTML) to talk to this Backend without CORS blocks
 app.add_middleware(
@@ -35,59 +33,6 @@ def serve_frontend():
         raise HTTPException(status_code=404, detail="index.html not found")
     return FileResponse(index_path)
 
-def load_share_store():
-    if not SHARE_STORE_PATH.exists():
-        return {}
-
-    try:
-        with SHARE_STORE_PATH.open("r", encoding="utf-8") as store_file:
-            data = json.load(store_file)
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-    return data if isinstance(data, dict) else {}
-
-def save_share_store(store):
-    with SHARE_STORE_PATH.open("w", encoding="utf-8") as store_file:
-        json.dump(store, store_file, separators=(",", ":"))
-
-@app.post("/share")
-def create_share_snapshot(snapshot: dict = Body(...)):
-    if not isinstance(snapshot, dict):
-        raise HTTPException(status_code=400, detail="Share snapshot must be an object.")
-
-    snapshot_id = secrets.token_urlsafe(8)
-    created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-    with share_store_lock:
-        store = load_share_store()
-        store[snapshot_id] = {
-            "created_at": created_at,
-            "snapshot": snapshot,
-        }
-
-        if len(store) > 200:
-            oldest_ids = sorted(
-                store,
-                key=lambda key: store[key].get("created_at", "")
-            )[:-200]
-            for old_id in oldest_ids:
-                store.pop(old_id, None)
-
-        save_share_store(store)
-
-    return {"share_id": snapshot_id}
-
-@app.get("/share/{snapshot_id}")
-def get_share_snapshot(snapshot_id: str):
-    with share_store_lock:
-        store = load_share_store()
-
-    record = store.get(snapshot_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Shared result not found.")
-
-    return record.get("snapshot", {})
 
 @app.on_event("startup")
 def print_frontend_url():
@@ -140,40 +85,6 @@ def calculate_next_position(current_lat, current_lon, target_time, df, step_hour
     delta_lon = (uo * elapsed_seconds) / meters_per_degree_lon
 
     return current_lat + delta_lat, current_lon + delta_lon
-
-def resolve_simulation_window(days, hours, minutes, drowning_time):
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
-
-    if drowning_time is not None and any(value is not None for value in (days, hours, minutes)):
-        raise HTTPException(
-            status_code=400,
-            detail="Use either elapsed time or drowning_time, not both."
-        )
-
-    if drowning_time is not None:
-        if drowning_time.tzinfo is None:
-            start_time = drowning_time.replace(tzinfo=datetime.timezone.utc)
-        else:
-            start_time = drowning_time.astimezone(datetime.timezone.utc)
-        elapsed_hours = (now_utc - start_time).total_seconds() / 3600
-    else:
-        if days is None and hours is None and minutes is None:
-            elapsed_hours = 5
-        else:
-            elapsed_hours = (
-                (0 if days is None else days * 24)
-                + (0 if hours is None else hours)
-                + (0 if minutes is None else minutes / 60)
-            )
-        start_time = now_utc - datetime.timedelta(hours=elapsed_hours)
-
-    if elapsed_hours <= 0:
-        raise HTTPException(status_code=400, detail="The drowning time must be in the past.")
-
-    if elapsed_hours > MAX_SIMULATION_HOURS:
-        raise HTTPException(status_code=400, detail=f"Simulation is limited to {MAX_SIMULATION_DAYS} days.")
-
-    return start_time, now_utc, elapsed_hours
 
 def parse_polygon_points(polygon):
     if polygon is None:

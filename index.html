@@ -23,6 +23,48 @@
         button { padding: 14px; border-radius: 6px; border: none; font-size: 15px; font-weight: bold; background: #00ffcc; color: #121212; cursor: pointer; transition: all 0.2s ease-in-out; }
         button:hover { background: #00ddbb; transform: translateY(-1px); }
         button:disabled { cursor: wait; opacity: 0.7; transform: none; }
+        .leaflet-top.leaflet-left {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+        }
+        .share-link-button {
+            width: 34px;
+            height: 34px;
+            padding: 0;
+            flex: 0 0 34px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: #12b8aa;
+            color: #ffffff;
+            border: 0;
+            box-shadow: 0 4px 14px rgba(18, 184, 170, 0.28);
+        }
+        .share-link-button:hover { background: #0fa99d; }
+        .share-link-button:disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
+            background: #2a5a56;
+            color: #d8fff8;
+        }
+        body.shared-snapshot-mode .share-link-button:disabled {
+            cursor: not-allowed;
+        }
+        .share-link-icon {
+            width: 21px;
+            height: 21px;
+            display: block;
+        }
+        .share-link-icon line {
+            stroke: currentColor;
+            stroke-width: 6;
+            stroke-linecap: round;
+        }
+        .share-link-icon circle {
+            fill: currentColor;
+        }
         .pick-location-button {
             width: 52px;
             height: 52px;
@@ -271,16 +313,16 @@
         }
         .wave-back {
             opacity: 0.95;
-            animation-duration: 2.2s;
+            animation-duration: 6.2s;
         }
         .wave-middle {
             opacity: 0.9;
-            animation-duration: 1.8s;
+            animation-duration: 7.1s;
             animation-direction: reverse;
         }
         .wave-front {
             opacity: 0.95;
-            animation-duration: 1.45s;
+            animation-duration: 4.3s;
         }
         .map-loading-percent {
             position: absolute;
@@ -569,6 +611,26 @@
         };
         gridSizeControl.addTo(map);
 
+        const shareLinkControl = L.control({position: 'topleft'});
+        shareLinkControl.onAdd = function() {
+            const container = L.DomUtil.create('div', 'share-link-map-control');
+            container.innerHTML = `
+                <button id="share-link-button" class="share-link-button" onclick="copyShareLink()" type="button" disabled aria-label="Copy share link" title="Copy share link">
+                    <svg class="share-link-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+                        <line x1="22" y1="34" x2="45" y2="20"></line>
+                        <line x1="22" y1="34" x2="45" y2="46"></line>
+                        <circle cx="16" cy="36" r="10"></circle>
+                        <circle cx="49" cy="17" r="10"></circle>
+                        <circle cx="49" cy="49" r="10"></circle>
+                    </svg>
+                </button>
+            `;
+            L.DomEvent.disableClickPropagation(container);
+            L.DomEvent.disableScrollPropagation(container);
+            return container;
+        };
+        shareLinkControl.addTo(map);
+
         function getGridStep(zoom) {
             if (zoom >= 17) return 0.001;
             if (zoom >= 15) return 0.0025;
@@ -659,9 +721,13 @@
         let loadingProgress = 0;
         let loadingProgressTimer = null;
         let loadingHideTimer = null;
-        const API_BASE_URL = 'http://127.0.0.1:8000';
+        let currentShareSnapshot = null;
+        let activeSharedSnapshotId = null;
+        let isSharedSnapshotMode = false;
+        const API_BASE_URL = window.location.protocol === 'file:' ? 'http://127.0.0.1:8000' : window.location.origin;
         const MAX_SIMULATION_DAYS = 7;
         const MAX_SIMULATION_HOURS = MAX_SIMULATION_DAYS * 24;
+        const LOADING_COMPLETE_HOLD_MS = 650;
 
         function toLocalDateTimeParts(date) {
             const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -691,9 +757,80 @@
             statusMessage.classList.toggle('error', isError);
         }
 
+        function setShareSnapshot(snapshot, shareId = null) {
+            currentShareSnapshot = snapshot;
+            activeSharedSnapshotId = shareId;
+
+            const shareButton = document.getElementById('share-link-button');
+            const label = activeSharedSnapshotId ? 'Copy this link' : 'Copy share link';
+            shareButton.disabled = !currentShareSnapshot;
+            shareButton.setAttribute('aria-label', label);
+            shareButton.title = label;
+        }
+
+        async function copyTextToClipboard(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+                return;
+            }
+
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.setAttribute('readonly', '');
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-9999px';
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+        }
+
+        async function copyShareLink() {
+            if (!currentShareSnapshot) {
+                setStatus('Calculate first, then copy a share link.', true);
+                return;
+            }
+
+            try {
+                let shareId = activeSharedSnapshotId;
+
+                if (!shareId) {
+                    const response = await fetch(`${API_BASE_URL}/share`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(currentShareSnapshot)
+                    });
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Could not create share link.');
+                    }
+
+                    shareId = data.share_id;
+                    activeSharedSnapshotId = shareId;
+                }
+
+                const shareUrl = new URL(`${API_BASE_URL}/`);
+                shareUrl.searchParams.set('snapshot', shareId);
+
+                await copyTextToClipboard(shareUrl.toString());
+                setStatus('Share link copied. Send it in WhatsApp.');
+            } catch (error) {
+                setStatus(error.message, true);
+            }
+        }
+
         function setMapLoadingProgress(progress) {
             loadingProgress = Math.max(0, Math.min(100, progress));
             document.getElementById('map-loading-percent').textContent = `${Math.round(loadingProgress)}%`;
+        }
+
+        function setLoadingControlsDisabled(isDisabled) {
+            document.getElementById('simulate-button').disabled = isDisabled;
+            document.getElementById('pick-location-button').disabled = isDisabled;
+            document.getElementById('pick-polygon-button').disabled = isDisabled;
+            document.getElementById('time-uncertainty-toggle').disabled = isDisabled;
+            document.getElementById('range-minutes').disabled = isDisabled;
         }
 
         function startMapLoading() {
@@ -704,33 +841,40 @@
             setMapLoadingProgress(0);
 
             loadingProgressTimer = window.setInterval(() => {
-                const step = loadingProgress < 70 ? 4 : loadingProgress < 92 ? 1.6 : 0.35;
+                const step = loadingProgress < 70 ? 2.4 : loadingProgress < 92 ? 0.9 : 0.2;
                 setMapLoadingProgress(Math.min(96, loadingProgress + step));
-            }, 220);
+            }, 320);
         }
 
-        function stopMapLoading() {
+        function finishMapLoading() {
             window.clearInterval(loadingProgressTimer);
             document.getElementById('map-loading-label').textContent = 'Calculation complete';
             setMapLoadingProgress(100);
 
             loadingHideTimer = window.setTimeout(() => {
                 document.getElementById('map-loading-overlay').classList.add('hidden');
-            }, 350);
+                document.getElementById('loading-indicator').classList.add('hidden');
+                if (!isSharedSnapshotMode) {
+                    setLoadingControlsDisabled(false);
+                }
+            }, LOADING_COMPLETE_HOLD_MS);
+        }
+
+        function stopMapLoading() {
+            window.clearTimeout(loadingHideTimer);
+            finishMapLoading();
         }
 
         function setLoading(isLoading) {
-            document.getElementById('loading-indicator').classList.toggle('hidden', !isLoading);
             if (isLoading) {
+                document.getElementById('loading-indicator').classList.remove('hidden');
+                setLoadingControlsDisabled(true);
+                document.getElementById('share-link-button').disabled = true;
                 startMapLoading();
             } else {
                 stopMapLoading();
+                document.getElementById('share-link-button').disabled = !currentShareSnapshot;
             }
-            document.getElementById('simulate-button').disabled = isLoading;
-            document.getElementById('pick-location-button').disabled = isLoading;
-            document.getElementById('pick-polygon-button').disabled = isLoading;
-            document.getElementById('time-uncertainty-toggle').disabled = isLoading;
-            document.getElementById('range-minutes').disabled = isLoading;
         }
 
         function isTimeUncertaintyEnabled() {
@@ -815,6 +959,10 @@
         }
 
         function clearDriftResultLayers() {
+            if (!isSharedSnapshotMode) {
+                setShareSnapshot(null);
+            }
+
             if (pathLine) {
                 map.removeLayer(pathLine);
                 pathLine = null;
@@ -1686,6 +1834,249 @@
             return rangeBoundsPoints;
         }
 
+        function serializeRangeResults(rangeResults) {
+            return rangeResults.map(({request, result}) => ({
+                request: {
+                    label: request.label,
+                    elapsedHours: request.elapsedHours,
+                    color: request.color
+                },
+                result
+            }));
+        }
+
+        function buildShareSnapshot(lat, lon, simulationInput, result, rangeResults, statusText) {
+            const mode = document.getElementById('drowning-mode').value;
+            const input = {
+                lat,
+                lon,
+                mode,
+                build: document.getElementById('build').value,
+                age: document.getElementById('age').value,
+                elapsedHours: Number(simulationInput.elapsedHours.toFixed(4)),
+                uncertaintyHours: Number(simulationInput.uncertaintyHours.toFixed(4)),
+                polygon: getSelectedPolygonPayload()
+            };
+
+            if (mode === 'elapsed') {
+                input.days = document.getElementById('days').value;
+                input.hours = document.getElementById('hours').value;
+                input.minutes = document.getElementById('minutes').value;
+            } else {
+                input.drowningTime = document.getElementById('drowning-time').value;
+                input.drowningDay = document.getElementById('drowning-day').value;
+                input.drowningMonth = document.getElementById('drowning-month').value;
+                input.drowningYear = document.getElementById('drowning-year').value;
+            }
+
+            return {
+                version: 1,
+                createdAt: new Date().toISOString(),
+                input,
+                result,
+                rangeResults: serializeRangeResults(rangeResults),
+                statusText
+            };
+        }
+
+        function renderSimulationResult(result, rangeResults, elapsedHours, uncertaintyHours, statusText = null) {
+            if (result.status !== "success" || result.trajectory.length <= 1) {
+                return null;
+            }
+
+            const trajectory = result.trajectory;
+            const latLngs = trajectory.map(p => [p.lat, p.lon]);
+            let finalAreaPoints = [];
+
+            pathLine = L.polyline(latLngs, {color: '#00ffcc', weight: 4, dashArray: '6, 8'}).addTo(map);
+
+            if (Array.isArray(result.area_trajectories) && result.area_trajectories.length > 0) {
+                areaPathLayer = L.layerGroup().addTo(map);
+
+                result.area_trajectories.forEach(area => {
+                    const areaLatLngs = area.trajectory.map(p => [p.lat, p.lon]);
+
+                    if (areaLatLngs.length > 1) {
+                        L.polyline(areaLatLngs, {
+                            color: '#ffbf47',
+                            weight: 2,
+                            opacity: 0.75,
+                            dashArray: '3, 6'
+                        }).addTo(areaPathLayer);
+                    }
+
+                    if (areaLatLngs.length > 0) {
+                        finalAreaPoints.push(areaLatLngs[areaLatLngs.length - 1]);
+                    }
+                });
+
+                if (finalAreaPoints.length >= 3) {
+                    finalAreaPolygon = L.polygon(finalAreaPoints, {
+                        color: '#ffbf47',
+                        weight: 3,
+                        fillColor: '#ffbf47',
+                        fillOpacity: 0.2
+                    }).addTo(map).bindPopup('<b>Predicted Area</b><br>Polygon drift projection.');
+                }
+            }
+
+            let heatPoints = [];
+            trajectory.forEach((point, index) => {
+                let intensity = index === trajectory.length - 1 ? 1.0 : 0.3;
+                heatPoints.push([point.lat, point.lon, intensity]);
+
+                if (index === trajectory.length - 1) {
+                    for (let i = 0; i < 40; i++) {
+                        let dispersion = 0.0025 * elapsedHours;
+                        let randomLat = point.lat + (Math.random() - 0.5) * dispersion;
+                        let randomLon = point.lon + (Math.random() - 0.5) * dispersion;
+                        heatPoints.push([randomLat, randomLon, 0.65]);
+                    }
+                }
+            });
+            finalAreaPoints.forEach(point => heatPoints.push([point[0], point[1], 0.8]));
+            const rangeBoundsPoints = drawTimeRangeResults(rangeResults, heatPoints);
+
+            heatLayer = L.heatLayer(heatPoints, {
+                radius: 28,
+                blur: 14,
+                maxZoom: 12,
+                gradient: {0.3: 'blue', 0.6: 'lime', 1: 'red'}
+            }).addTo(map);
+
+            const allBoundsPoints = latLngs.concat(finalAreaPoints, rangeBoundsPoints);
+            const uncertaintyText = uncertaintyHours > 0
+                ? ` +/- ${formatDurationHours(uncertaintyHours)}`
+                : '';
+            const resultStatusText = statusText || `Calculated ${result.hours_simulated} hours${uncertaintyText} from ${result.data_source_used}.`;
+
+            if (finalAreaPoints.length >= 3 || rangeBoundsPoints.length > 0) {
+                map.fitBounds(L.latLngBounds(allBoundsPoints).pad(0.18));
+            } else {
+                map.panTo([trajectory[trajectory.length - 1].lat, trajectory[trajectory.length - 1].lon]);
+            }
+
+            setStatus(resultStatusText);
+            return {statusText: resultStatusText};
+        }
+
+        function setSharedSnapshotMode(isEnabled) {
+            isSharedSnapshotMode = isEnabled;
+            document.body.classList.toggle('shared-snapshot-mode', isEnabled);
+
+            document.querySelectorAll('#sidebar input, #sidebar select').forEach(element => {
+                element.disabled = isEnabled;
+            });
+
+            [
+                'simulate-button',
+                'pick-location-button',
+                'pick-polygon-button',
+                'time-uncertainty-toggle'
+            ].forEach(id => {
+                const element = document.getElementById(id);
+                if (element) {
+                    element.disabled = isEnabled;
+                }
+            });
+
+            document.getElementById('share-link-button').disabled = !currentShareSnapshot;
+        }
+
+        function applySnapshotInputs(snapshot) {
+            const input = snapshot.input || {};
+
+            if (Number.isFinite(input.lat)) {
+                document.getElementById('lat').value = Number(input.lat).toFixed(4);
+            }
+
+            if (Number.isFinite(input.lon)) {
+                document.getElementById('lon').value = Number(input.lon).toFixed(4);
+            }
+
+            if (input.build) {
+                document.getElementById('build').value = input.build;
+            }
+
+            if (input.age !== undefined) {
+                document.getElementById('age').value = input.age;
+            }
+
+            document.getElementById('drowning-mode').value = input.mode || 'elapsed';
+            updateDrowningInputVisibility();
+
+            if ((input.mode || 'elapsed') === 'elapsed') {
+                document.getElementById('days').value = input.days ?? 0;
+                document.getElementById('hours').value = input.hours ?? 0;
+                document.getElementById('minutes').value = input.minutes ?? 0;
+            } else {
+                document.getElementById('drowning-day').value = input.drowningDay ?? document.getElementById('drowning-day').value;
+                document.getElementById('drowning-month').value = input.drowningMonth ?? document.getElementById('drowning-month').value;
+                document.getElementById('drowning-year').value = input.drowningYear ?? document.getElementById('drowning-year').value;
+                document.getElementById('drowning-time').value = input.drowningTime ?? document.getElementById('drowning-time').value;
+                handleManualDateInput();
+            }
+
+            if (input.uncertaintyHours > 0) {
+                setTimeUncertaintyEnabled(true);
+                document.getElementById('range-minutes').value = Math.round(input.uncertaintyHours * 60);
+            } else {
+                setTimeUncertaintyEnabled(false);
+            }
+
+            clearPolygonSelection();
+            if (Array.isArray(input.polygon) && input.polygon.length >= 3) {
+                polygonPoints = input.polygon.map(point => [point.lat, point.lon]);
+                selectedPolygon = L.polygon(polygonPoints, {
+                    color: '#00ffcc',
+                    weight: 3,
+                    fillColor: '#00ffcc',
+                    fillOpacity: 0.18
+                }).addTo(map);
+                updatePolygonInfo();
+            }
+        }
+
+        async function loadSharedSnapshotFromUrl() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const snapshotId = urlParams.get('snapshot');
+
+            if (!snapshotId) return;
+
+            try {
+                setStatus('Loading shared result...');
+                const response = await fetch(`${API_BASE_URL}/share/${encodeURIComponent(snapshotId)}`);
+                const snapshot = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(snapshot.detail || 'Shared result not found.');
+                }
+
+                clearDriftResultLayers();
+                applySnapshotInputs(snapshot);
+
+                const input = snapshot.input || {};
+                setLastSeenMarker(input.lat, input.lon, input.polygon ? 'Shared Area Center' : 'Shared Last Seen Point', false);
+                const renderedResult = renderSimulationResult(
+                    snapshot.result,
+                    snapshot.rangeResults || [],
+                    input.elapsedHours || snapshot.result.hours_simulated || 0,
+                    input.uncertaintyHours || 0,
+                    snapshot.statusText
+                );
+
+                if (!renderedResult) {
+                    throw new Error('Shared result data is not valid.');
+                }
+
+                setShareSnapshot(snapshot, snapshotId);
+                setSharedSnapshotMode(true);
+                setStatus(`${renderedResult.statusText} Shared result is read-only.`);
+            } catch (error) {
+                setStatus(error.message, true);
+            }
+        }
+
         // Pick mode lets regular map clicks pan/inspect without changing the selected location.
         map.on('click', function(e) {
             const clickedLat = e.latlng.lat;
@@ -1748,83 +2139,22 @@
                     );
                 }
 
-                if (result.status === "success" && result.trajectory.length > 1) {
-                    const trajectory = result.trajectory;
-                    const latLngs = trajectory.map(p => [p.lat, p.lon]);
-                    let finalAreaPoints = [];
+                const renderedResult = renderSimulationResult(
+                    result,
+                    rangeResults,
+                    elapsedHours,
+                    simulationInput.uncertaintyHours
+                );
 
-                    // Draw the turquoise dashed path showing history
-                    pathLine = L.polyline(latLngs, {color: '#00ffcc', weight: 4, dashArray: '6, 8'}).addTo(map);
-
-                    if (Array.isArray(result.area_trajectories) && result.area_trajectories.length > 0) {
-                        areaPathLayer = L.layerGroup().addTo(map);
-
-                        result.area_trajectories.forEach(area => {
-                            const areaLatLngs = area.trajectory.map(p => [p.lat, p.lon]);
-
-                            if (areaLatLngs.length > 1) {
-                                L.polyline(areaLatLngs, {
-                                    color: '#ffbf47',
-                                    weight: 2,
-                                    opacity: 0.75,
-                                    dashArray: '3, 6'
-                                }).addTo(areaPathLayer);
-                            }
-
-                            if (areaLatLngs.length > 0) {
-                                finalAreaPoints.push(areaLatLngs[areaLatLngs.length - 1]);
-                            }
-                        });
-
-                        if (finalAreaPoints.length >= 3) {
-                            finalAreaPolygon = L.polygon(finalAreaPoints, {
-                                color: '#ffbf47',
-                                weight: 3,
-                                fillColor: '#ffbf47',
-                                fillOpacity: 0.2
-                            }).addTo(map).bindPopup('<b>Predicted Area</b><br>Polygon drift projection.');
-                        }
-                    }
-
-                    // Build expanding uncertainty Heatmap around the final zone
-                    let heatPoints = [];
-                    trajectory.forEach((point, index) => {
-                        let intensity = index === trajectory.length - 1 ? 1.0 : 0.3;
-                        heatPoints.push([point.lat, point.lon, intensity]);
-                        
-                        // If it's the last predicted point, spread the statistical search area
-                        if (index === trajectory.length - 1) {
-                            for (let i = 0; i < 40; i++) {
-                                let dispersion = 0.0025 * elapsedHours;
-                                let randomLat = point.lat + (Math.random() - 0.5) * dispersion;
-                                let randomLon = point.lon + (Math.random() - 0.5) * dispersion;
-                                heatPoints.push([randomLat, randomLon, 0.65]);
-                            }
-                        }
-                    });
-                    finalAreaPoints.forEach(point => heatPoints.push([point[0], point[1], 0.8]));
-                    const rangeBoundsPoints = drawTimeRangeResults(rangeResults, heatPoints);
-
-                    heatLayer = L.heatLayer(heatPoints, {
-                        radius: 28, 
-                        blur: 14, 
-                        maxZoom: 12,
-                        gradient: {0.3: 'blue', 0.6: 'lime', 1: 'red'}
-                    }).addTo(map);
-
-                    // Smoothly slide map view to the target search zone
-                    const allBoundsPoints = latLngs.concat(finalAreaPoints, rangeBoundsPoints);
-                    const uncertaintyText = simulationInput.uncertaintyHours > 0
-                        ? ` +/- ${formatDurationHours(simulationInput.uncertaintyHours)}`
-                        : '';
-
-                    if (finalAreaPoints.length >= 3 || rangeBoundsPoints.length > 0) {
-                        map.fitBounds(L.latLngBounds(allBoundsPoints).pad(0.18));
-                        setStatus(`Calculated ${result.hours_simulated} hours${uncertaintyText} from ${result.data_source_used}.`);
-                    } else {
-                        map.panTo([trajectory[trajectory.length - 1].lat, trajectory[trajectory.length - 1].lon]);
-                        setStatus(`Calculated ${result.hours_simulated} hours${uncertaintyText} from ${result.data_source_used}.`);
-                    }
+                if (renderedResult) {
+                    setShareSnapshot(buildShareSnapshot(
+                        lat,
+                        lon,
+                        simulationInput,
+                        result,
+                        rangeResults,
+                        renderedResult.statusText
+                    ));
                 }
             } catch (error) {
                 console.error("API Connection Error:", error);
@@ -1841,6 +2171,7 @@
         document.getElementById('drowning-calendar').value = toDateInputValue(defaultDrowningDate);
         document.getElementById('drowning-time').value = defaultDrowningDate.time;
         updateDrowningInputVisibility();
+        loadSharedSnapshotFromUrl();
     </script>
 </body>
 </html>

@@ -5,8 +5,8 @@ import json
 from typing import Optional
 import pandas as pd
 import numpy as np
-import requests
-import copernicusmarine
+
+from fetch_current import CopernicusFetcher, OpenMeteoFetcher
 
 app = FastAPI(title="SafeCurrent - Search & Rescue API")
 MAX_SIMULATION_DAYS = 7
@@ -23,24 +23,14 @@ app.add_middleware(
 
 # --- CORE SIMULATION LOGIC ---
 
-def get_current_data_fallback(lat, lon, start_time, end_time):
+def get_current_data(lat, lon, start_time, end_time):
     """
     Tries to fetch from Copernicus. If it fails, instantly switches to Open-Meteo API
     to ensure the hackathon app never crashes.
     """
     try:
         print("Attempting to fetch from Copernicus Official API...")
-        ds = copernicusmarine.read(
-            dataset_id="med-cmcc-phys-an-fc-h",
-            variables=["uo", "vo"],
-            longitude_min=lon - 0.5,
-            longitude_max=lon + 0.5,
-            latitude_min=lat - 0.5,
-            latitude_max=lat + 0.5,
-            start_date=start_time.strftime("%Y-%m-%dT%H:%M:%S"),
-            end_date=end_time.strftime("%Y-%m-%dT%H:%M:%S")
-        )
-        df = ds.to_dataframe().reset_index()
+        df = CopernicusFetcher().fetch(lat, lon, start_time, end_time)
         return df, "copernicus"
     except Exception as e:
         print(f"Copernicus failed ({e}). Switching to Open-Meteo Marine API Backup...")
@@ -72,6 +62,8 @@ def get_current_data_fallback(lat, lon, start_time, end_time):
             rows.append({"time": pd.to_datetime(t), "latitude": lat, "longitude": lon, "uo": uo, "vo": vo})
             
         return pd.DataFrame(rows), "open-meteo"
+        df = OpenMeteoFetcher().fetch(lat, lon, start_time, end_time)
+        return df, "open-meteo"
 
 def calculate_next_position(current_lat, current_lon, target_time, df, hour_index, source, step_hours=1.0):
     df['time'] = pd.to_datetime(df['time']).dt.tz_localize(None)
@@ -184,6 +176,19 @@ def parse_polygon_points(polygon):
     return points
 
 def run_trajectory(lat, lon, start_time, elapsed_hours, df, source):
+@app.get("/simulate")
+def simulate_drift(
+    lat: float = Query(..., description="Latitude of last seen position"),
+    lon: float = Query(..., description="Longitude of last seen position"),
+    hours: int = Query(5, description="Number of hours to simulate simulation")
+):
+    start_time = datetime.datetime.now(datetime.timezone.utc)
+    end_time = start_time + datetime.timedelta(hours=hours + 2)
+    
+    # Fetch Data
+    df, source = get_current_data(lat, lon, start_time, end_time)
+    
+    # Run Simulation
     trajectory = [{"hour": 0, "lat": lat, "lon": lon}]
     current_lat = lat
     current_lon = lon
@@ -210,6 +215,9 @@ def run_trajectory(lat, lon, start_time, elapsed_hours, df, source):
             "hour": round(elapsed_so_far, 2),
             "lat": round(next_lat, 5),
             "lon": round(next_lon, 5)
+            "hour": h + 1,
+            "lat": round(float(next_lat), 5),
+            "lon": round(float(next_lon), 5)
         })
         current_lat, current_lon = next_lat, next_lon
         remaining_hours = max(0.0, remaining_hours - step_hours)

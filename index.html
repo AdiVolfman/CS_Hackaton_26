@@ -100,6 +100,27 @@
             text-align: right;
             white-space: nowrap;
         }
+        .polygon-edit-handle,
+        .polygon-edge-handle {
+            display: block;
+            box-sizing: border-box;
+            border: 2px solid #121212;
+            box-shadow: 0 2px 7px rgba(0, 0, 0, 0.45);
+        }
+        .polygon-edit-handle {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #00ffcc;
+            cursor: grab;
+        }
+        .polygon-edge-handle {
+            width: 14px;
+            height: 14px;
+            background: #ffbf47;
+            transform: rotate(45deg);
+            cursor: copy;
+        }
         .sr-only {
             position: absolute;
             width: 1px;
@@ -130,6 +151,49 @@
             text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
             box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
             transform: translate(-50%, -50%);
+        }
+        .grid-label {
+            color: #dffdf8;
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1;
+            white-space: nowrap;
+            padding: 2px 5px;
+            border-radius: 4px;
+            background: rgba(0, 0, 0, 0.52);
+            border: 1px solid rgba(0, 255, 204, 0.35);
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+            transform: translate(-50%, -50%);
+        }
+        .grid-size-control {
+            padding: 8px 10px;
+            border: 1px solid rgba(0, 255, 204, 0.45);
+            border-radius: 6px;
+            background: rgba(18, 18, 18, 0.82);
+            color: #dffdf8;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+            font-size: 12px;
+            line-height: 1.25;
+        }
+        .grid-size-control span {
+            display: block;
+            color: #00ffcc;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .grid-size-control strong {
+            display: block;
+            margin-top: 2px;
+            color: #ffffff;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+        .grid-size-control small {
+            display: block;
+            margin-top: 2px;
+            color: #b9c8c5;
+            font-size: 10px;
         }
         .loading-indicator {
             display: flex;
@@ -167,6 +231,7 @@
     <div id="sidebar">
         <h2>SafeCurrent UI</h2>
         <p><strong>Operational Instruction:</strong><br>Enter coordinates manually or press Pick From Map, then click the sea area to set the Last Seen Marker.</p>
+        <div id="status-message" role="status">Ready</div>
         
         <div class="map-tool-row">
             <button id="pick-location-button" class="pick-location-button" onclick="togglePickLocationMode()" type="button" aria-label="Pick location from map" title="Pick location from map">
@@ -265,7 +330,6 @@
             <div class="loading-spinner" aria-hidden="true"></div>
             <span>Calculating drift...</span>
         </div>
-        <div id="status-message" role="status">Ready</div>
 
         <div class="footer">
             System Status: Connected<br>
@@ -282,6 +346,9 @@
         map.createPane('labels');
         map.getPane('labels').style.zIndex = 650;
         map.getPane('labels').style.pointerEvents = 'none';
+        map.createPane('grid');
+        map.getPane('grid').style.zIndex = 620;
+        map.getPane('grid').style.pointerEvents = 'none';
 
         const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
             attribution: 'Tiles &copy; Esri',
@@ -297,6 +364,7 @@
         }).addTo(map);
 
         const beachLabelLayer = L.layerGroup().addTo(map);
+        const gridLayer = L.layerGroup().addTo(map);
         let beachLabelAbortController = null;
         let lastBeachLabelBounds = null;
         const curatedBeachLabels = [
@@ -352,10 +420,122 @@
             {"Satellite": satelliteLayer},
             {
                 "City labels": labelLayer,
-                "Beach names": beachLabelLayer
+                "Beach names": beachLabelLayer,
+                "Lat/Lon grid": gridLayer
             },
             {collapsed: true}
         ).addTo(map);
+
+        const gridSizeControl = L.control({position: 'bottomright'});
+        gridSizeControl.onAdd = function() {
+            const container = L.DomUtil.create('div', 'grid-size-control');
+            container.innerHTML = `
+                <span>Grid square</span>
+                <strong id="grid-size-value">--</strong>
+                <small id="grid-step-value">--</small>
+            `;
+            L.DomEvent.disableClickPropagation(container);
+            return container;
+        };
+        gridSizeControl.addTo(map);
+
+        function getGridStep(zoom) {
+            if (zoom >= 17) return 0.001;
+            if (zoom >= 15) return 0.0025;
+            if (zoom >= 13) return 0.005;
+            if (zoom >= 11) return 0.01;
+            if (zoom >= 9) return 0.05;
+            if (zoom >= 7) return 0.1;
+            return 0.5;
+        }
+
+        function getGridDecimals(step) {
+            if (step < 0.002) return 3;
+            if (step < 0.01) return 3;
+            if (step < 0.1) return 2;
+            return 1;
+        }
+
+        function formatGridCoordinate(value, axis, decimals) {
+            const direction = axis === 'lat'
+                ? (value >= 0 ? 'N' : 'S')
+                : (value >= 0 ? 'E' : 'W');
+
+            return `${Math.abs(value).toFixed(decimals)} deg ${direction}`;
+        }
+
+        function addGridLabel(position, text) {
+            L.marker(position, {
+                pane: 'grid',
+                icon: L.divIcon({
+                    className: '',
+                    html: `<div class="grid-label">${text}</div>`,
+                    iconSize: [0, 0]
+                }),
+                interactive: false
+            }).addTo(gridLayer);
+        }
+
+        function updateGridLayer() {
+            if (!map.hasLayer(gridLayer)) return;
+
+            gridLayer.clearLayers();
+
+            const bounds = map.getBounds().pad(0.02);
+            const south = bounds.getSouth();
+            const north = bounds.getNorth();
+            const west = bounds.getWest();
+            const east = bounds.getEast();
+            const latLabelLon = west + (east - west) * 0.04;
+            const lonLabelLat = south + (north - south) * 0.06;
+            const step = getGridStep(map.getZoom());
+            const decimals = getGridDecimals(step);
+            const firstLat = Math.ceil(south / step) * step;
+            const firstLon = Math.ceil(west / step) * step;
+            const lineStyle = {
+                pane: 'grid',
+                color: '#00ffcc',
+                weight: 1,
+                opacity: 0.34,
+                interactive: false
+            };
+
+            for (let lat = firstLat; lat <= north + step / 2; lat += step) {
+                const normalizedLat = Number(lat.toFixed(6));
+                L.polyline([[normalizedLat, west], [normalizedLat, east]], lineStyle).addTo(gridLayer);
+                addGridLabel([normalizedLat, latLabelLon], formatGridCoordinate(normalizedLat, 'lat', decimals));
+            }
+
+            for (let lon = firstLon; lon <= east + step / 2; lon += step) {
+                const normalizedLon = Number(lon.toFixed(6));
+                L.polyline([[south, normalizedLon], [north, normalizedLon]], lineStyle).addTo(gridLayer);
+                addGridLabel([lonLabelLat, normalizedLon], formatGridCoordinate(normalizedLon, 'lon', decimals));
+            }
+
+            updateGridSizeControl();
+        }
+
+        function updateGridSizeControl() {
+            const sizeValue = document.getElementById('grid-size-value');
+            const stepValue = document.getElementById('grid-step-value');
+
+            if (!sizeValue || !stepValue) return;
+
+            if (!map.hasLayer(gridLayer)) {
+                sizeValue.textContent = 'Hidden';
+                stepValue.textContent = 'Turn on Lat/Lon grid';
+                return;
+            }
+
+            const center = map.getCenter();
+            const step = getGridStep(map.getZoom());
+            const decimals = getGridDecimals(step);
+            const widthMeters = getDistanceMeters([center.lat, center.lng], [center.lat, center.lng + step]);
+            const heightMeters = getDistanceMeters([center.lat, center.lng], [center.lat + step, center.lng]);
+
+            sizeValue.textContent = `${formatDistance(widthMeters)} x ${formatDistance(heightMeters)}`;
+            stepValue.textContent = `${step.toFixed(decimals)} deg spacing`;
+        }
 
         let pathLine = null;
         let startMarker = null;
@@ -367,6 +547,8 @@
         let selectedPolygon = null;
         let polygonDraftLine = null;
         let polygonVertexMarkers = [];
+        let polygonEditMarkers = [];
+        let polygonEdgeMarkers = [];
         let polygonPoints = [];
         const API_BASE_URL = 'http://127.0.0.1:8000';
         const MAX_SIMULATION_DAYS = 7;
@@ -422,11 +604,15 @@
             return {lat, lon};
         }
 
-        function setLastSeenMarker(lat, lon, title = 'Last Seen Point') {
+        function setLastSeenMarker(lat, lon, title = 'Last Seen Point', openPopup = true) {
             if (startMarker) map.removeLayer(startMarker);
 
             startMarker = L.marker([lat, lon]).addTo(map)
-                .bindPopup(`<b>${title}</b><br>Calculating drift vectors...`).openPopup();
+                .bindPopup(`<b>${title}</b><br>Calculating drift vectors...`);
+
+            if (openPopup) {
+                startMarker.openPopup();
+            }
         }
 
         function clearAreaResultLayers() {
@@ -439,6 +625,20 @@
                 map.removeLayer(finalAreaPolygon);
                 finalAreaPolygon = null;
             }
+        }
+
+        function clearDriftResultLayers() {
+            if (pathLine) {
+                map.removeLayer(pathLine);
+                pathLine = null;
+            }
+
+            if (heatLayer) {
+                map.removeLayer(heatLayer);
+                heatLayer = null;
+            }
+
+            clearAreaResultLayers();
         }
 
         function formatArea(areaSqMeters) {
@@ -525,6 +725,144 @@
             perimeterValue.textContent = formatDistance(getPolygonPerimeterMeters(polygonPoints));
         }
 
+        function createPolygonHandleIcon(type) {
+            const className = type === 'edge' ? 'polygon-edge-handle' : 'polygon-edit-handle';
+            const size = type === 'edge' ? 14 : 16;
+
+            return L.divIcon({
+                className: '',
+                html: `<span class="${className}"></span>`,
+                iconSize: [size, size],
+                iconAnchor: [size / 2, size / 2]
+            });
+        }
+
+        function clearPolygonEditHandles() {
+            polygonEditMarkers.forEach(marker => map.removeLayer(marker));
+            polygonEdgeMarkers.forEach(marker => map.removeLayer(marker));
+            polygonEditMarkers = [];
+            polygonEdgeMarkers = [];
+        }
+
+        function getEdgeMidpoint(firstPoint, secondPoint) {
+            return [
+                (firstPoint[0] + secondPoint[0]) / 2,
+                (firstPoint[1] + secondPoint[1]) / 2
+            ];
+        }
+
+        function syncPolygonEditHandles(skipEdgeIndex = null) {
+            polygonEditMarkers.forEach((marker, index) => {
+                if (polygonPoints[index]) {
+                    marker.setLatLng(polygonPoints[index]);
+                }
+            });
+
+            polygonEdgeMarkers.forEach((marker, index) => {
+                if (index === skipEdgeIndex) return;
+
+                const nextIndex = (index + 1) % polygonPoints.length;
+                if (polygonPoints[index] && polygonPoints[nextIndex]) {
+                    marker.setLatLng(getEdgeMidpoint(polygonPoints[index], polygonPoints[nextIndex]));
+                }
+            });
+        }
+
+        function updateSelectedPolygonFromPoints(statusMessage = null) {
+            if (!selectedPolygon || polygonPoints.length < 3) return;
+
+            selectedPolygon.setLatLngs([polygonPoints]);
+
+            const center = selectedPolygon.getBounds().getCenter();
+            document.getElementById('lat').value = center.lat.toFixed(4);
+            document.getElementById('lon').value = center.lng.toFixed(4);
+            setLastSeenMarker(center.lat, center.lng, 'Selected Area Center', false);
+            updatePolygonInfo();
+            clearDriftResultLayers();
+
+            if (statusMessage) {
+                setStatus(statusMessage);
+            }
+        }
+
+        function addPolygonVertexOnEdge(edgeIndex, latLng) {
+            const insertIndex = edgeIndex + 1;
+            polygonPoints.splice(insertIndex, 0, [latLng.lat, latLng.lng]);
+            updateSelectedPolygonFromPoints(`Vertex added: ${formatArea(getPolygonAreaSqMeters(polygonPoints))}. Recalculate when ready.`);
+            renderPolygonEditHandles();
+        }
+
+        function renderPolygonEditHandles() {
+            clearPolygonEditHandles();
+
+            if (!selectedPolygon || polygonPoints.length < 3) return;
+
+            polygonPoints.forEach((point, index) => {
+                const marker = L.marker(point, {
+                    icon: createPolygonHandleIcon('corner'),
+                    draggable: true,
+                    title: 'Drag corner'
+                }).addTo(map);
+
+                marker.on('drag', function(event) {
+                    const position = event.target.getLatLng();
+                    polygonPoints[index] = [position.lat, position.lng];
+                    updateSelectedPolygonFromPoints(`Polygon adjusted: ${formatArea(getPolygonAreaSqMeters(polygonPoints))}. Recalculate when ready.`);
+                    syncPolygonEditHandles();
+                });
+
+                marker.on('dragend', function() {
+                    syncPolygonEditHandles();
+                });
+
+                polygonEditMarkers.push(marker);
+            });
+
+            polygonPoints.forEach((point, index) => {
+                const nextIndex = (index + 1) % polygonPoints.length;
+                const marker = L.marker(getEdgeMidpoint(point, polygonPoints[nextIndex]), {
+                    icon: createPolygonHandleIcon('edge'),
+                    draggable: true,
+                    title: 'Drag edge, or click to add vertex'
+                }).addTo(map);
+                let lastPosition = marker.getLatLng();
+                let wasDragged = false;
+
+                marker.on('dragstart', function(event) {
+                    lastPosition = event.target.getLatLng();
+                    wasDragged = false;
+                });
+
+                marker.on('drag', function(event) {
+                    wasDragged = true;
+                    const position = event.target.getLatLng();
+                    const deltaLat = position.lat - lastPosition.lat;
+                    const deltaLng = position.lng - lastPosition.lng;
+                    polygonPoints[index] = [polygonPoints[index][0] + deltaLat, polygonPoints[index][1] + deltaLng];
+                    polygonPoints[nextIndex] = [polygonPoints[nextIndex][0] + deltaLat, polygonPoints[nextIndex][1] + deltaLng];
+                    lastPosition = position;
+
+                    updateSelectedPolygonFromPoints(`Polygon edge moved: ${formatArea(getPolygonAreaSqMeters(polygonPoints))}. Recalculate when ready.`);
+                    syncPolygonEditHandles(index);
+                });
+
+                marker.on('dragend', function() {
+                    syncPolygonEditHandles();
+                    window.setTimeout(() => {
+                        wasDragged = false;
+                    }, 150);
+                });
+
+                marker.on('click', function(event) {
+                    if (wasDragged) return;
+
+                    addPolygonVertexOnEdge(index, event.target.getLatLng());
+                });
+
+                polygonEdgeMarkers.push(marker);
+            });
+        }
+
         function setPickLocationMode(isActive) {
             isPickingLocation = isActive;
             const pickButton = document.getElementById('pick-location-button');
@@ -557,6 +895,7 @@
 
             polygonVertexMarkers.forEach(marker => map.removeLayer(marker));
             polygonVertexMarkers = [];
+            clearPolygonEditHandles();
             polygonPoints = [];
             updatePolygonInfo();
         }
@@ -660,7 +999,8 @@
             map.getContainer().style.cursor = '';
             setLastSeenMarker(center.lat, center.lng, 'Selected Area Center');
             updatePolygonInfo();
-            setStatus(`Polygon selected: ${formatArea(getPolygonAreaSqMeters(polygonPoints))}. Recalculate when ready.`);
+            renderPolygonEditHandles();
+            setStatus(`Polygon selected: ${formatArea(getPolygonAreaSqMeters(polygonPoints))}. Drag turquoise corners, drag orange edges, or click orange to add vertices.`);
         }
 
         function getSelectedPolygonPayload() {
@@ -847,9 +1187,14 @@
         }
 
         map.on('moveend zoomend', updateBeachLabels);
+        map.on('moveend zoomend', updateGridLayer);
         map.on('overlayadd', function(event) {
             if (event.layer === beachLabelLayer) {
                 updateBeachLabels();
+            }
+
+            if (event.layer === gridLayer) {
+                updateGridLayer();
             }
         });
         map.on('overlayremove', function(event) {
@@ -860,7 +1205,13 @@
                 beachLabelLayer.clearLayers();
                 lastBeachLabelBounds = null;
             }
+
+            if (event.layer === gridLayer) {
+                gridLayer.clearLayers();
+                updateGridSizeControl();
+            }
         });
+        updateGridLayer();
 
         function updateDrowningInputVisibility() {
             const mode = document.getElementById('drowning-mode').value;

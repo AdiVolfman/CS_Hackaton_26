@@ -12,7 +12,7 @@
     <style>
         body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; height: 100vh; background: #121212; color: white; }
         #sidebar { width: 320px; padding: 25px; background: #1e1e1e; display: flex; flex-direction: column; gap: 18px; box-shadow: 4px 0 15px rgba(0,0,0,0.6); z-index: 1000; box-sizing: border-box; overflow-y: auto; }
-        #map { flex-grow: 1; height: 100%; }
+        #map { flex-grow: 1; height: 100%; position: relative; }
         h2 { margin: 0; color: #00ffcc; font-size: 24px; letter-spacing: 1px; }
         p { margin: 0; font-size: 14px; color: #ccc; line-height: 1.4; }
         .input-group { display: flex; flex-direction: column; gap: 6px; }
@@ -23,6 +23,48 @@
         button { padding: 14px; border-radius: 6px; border: none; font-size: 15px; font-weight: bold; background: #00ffcc; color: #121212; cursor: pointer; transition: all 0.2s ease-in-out; }
         button:hover { background: #00ddbb; transform: translateY(-1px); }
         button:disabled { cursor: wait; opacity: 0.7; transform: none; }
+        .leaflet-top.leaflet-left {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+        }
+        .share-link-button {
+            width: 34px;
+            height: 34px;
+            padding: 0;
+            flex: 0 0 34px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background: #12b8aa;
+            color: #ffffff;
+            border: 0;
+            box-shadow: 0 4px 14px rgba(18, 184, 170, 0.28);
+        }
+        .share-link-button:hover { background: #0fa99d; }
+        .share-link-button:disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
+            background: #2a5a56;
+            color: #d8fff8;
+        }
+        body.shared-snapshot-mode .share-link-button:disabled {
+            cursor: not-allowed;
+        }
+        .share-link-icon {
+            width: 21px;
+            height: 21px;
+            display: block;
+        }
+        .share-link-icon line {
+            stroke: currentColor;
+            stroke-width: 6;
+            stroke-linecap: round;
+        }
+        .share-link-icon circle {
+            fill: currentColor;
+        }
         .pick-location-button {
             width: 52px;
             height: 52px;
@@ -120,6 +162,72 @@
             background: #ffbf47;
             transform: rotate(45deg);
             cursor: copy;
+        }
+        .current-icon {
+            width: 28px;
+            height: 18px;
+            display: block;
+            position: relative;
+        }
+        .current-icon::before {
+            content: "";
+            position: absolute;
+            left: 2px;
+            top: 7px;
+            width: 19px;
+            height: 4px;
+            border-radius: 999px;
+            background: #ffbf47;
+        }
+        .current-icon::after {
+            content: "";
+            position: absolute;
+            right: 1px;
+            top: 3px;
+            border-top: 6px solid transparent;
+            border-bottom: 6px solid transparent;
+            border-left: 9px solid #ffbf47;
+        }
+        .lifeguard-data-button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            background: #2a2a2a;
+            color: #ffbf47;
+            border: 1px solid rgba(255, 191, 71, 0.45);
+        }
+        .lifeguard-data-button:hover { background: #3a2f1d; }
+        .lifeguard-data-button.active {
+            background: rgba(255, 191, 71, 0.16);
+            box-shadow: 0 0 0 2px rgba(255, 191, 71, 0.22);
+        }
+        .lifeguard-current-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 10px;
+            align-items: end;
+        }
+        .lifeguard-current-row.current-open {
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        }
+        .local-current-arrowhead {
+            display: block;
+            width: 18px;
+            height: 18px;
+            background: #ffbf47;
+            clip-path: polygon(50% 0, 100% 100%, 50% 74%, 0 100%);
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+            transform-origin: center;
+        }
+        .local-current-start-dot {
+            display: block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 2px solid #121212;
+            background: #ffbf47;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
         }
         .sr-only {
             position: absolute;
@@ -222,6 +330,82 @@
             font-weight: 600;
         }
         .loading-indicator.hidden { display: none; }
+        .map-loading-overlay {
+            position: absolute;
+            inset: 0;
+            z-index: 1200;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0.08);
+        }
+        .map-loading-card {
+            width: min(320px, 70%);
+            padding: 18px;
+            border: 1px solid rgba(0, 255, 204, 0.45);
+            border-radius: 6px;
+            background: rgba(18, 18, 18, 0.9);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+        }
+        .map-loading-card span {
+            display: block;
+            margin-bottom: 10px;
+            color: #d8fff8;
+            font-size: 13px;
+            font-weight: 700;
+            text-align: center;
+        }
+        .wave-loader {
+            position: relative;
+            height: 58px;
+            overflow: hidden;
+            border: 1px solid rgba(76, 218, 201, 0.35);
+            border-radius: 6px;
+            background: #0b4f5a;
+        }
+        .wave-layer {
+            position: absolute;
+            left: -18%;
+            width: 136%;
+            height: 100%;
+            bottom: 0;
+            animation: wave-drift 4.8s ease-in-out infinite alternate;
+        }
+        .wave-layer svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        .wave-back {
+            opacity: 0.95;
+            animation-duration: 6.2s;
+        }
+        .wave-middle {
+            opacity: 0.9;
+            animation-duration: 7.1s;
+            animation-direction: reverse;
+        }
+        .wave-front {
+            opacity: 0.95;
+            animation-duration: 4.3s;
+        }
+        .map-loading-percent {
+            position: absolute;
+            inset: 0;
+            z-index: 3;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #ffffff;
+            font-size: 24px;
+            font-weight: 800;
+            text-shadow: 0 1px 5px rgba(0, 0, 0, 0.75);
+        }
+        @keyframes wave-drift {
+            from { transform: translateX(-18px); }
+            to { transform: translateX(18px); }
+        }
         .loading-spinner {
             width: 24px;
             height: 24px;
@@ -236,6 +420,57 @@
         }
         #status-message { min-height: 18px; font-size: 12px; color: #aaa; }
         #status-message.error { color: #ff7676; }
+        .search-center-marker {
+            background: transparent;
+            border: 0;
+            width: auto !important;
+            height: auto !important;
+        }
+        .search-center-label {
+            position: relative;
+            display: inline-grid;
+            gap: 3px;
+            width: max-content;
+            box-sizing: border-box;
+            padding: 8px 10px;
+            border: 1px solid rgba(0, 255, 204, 0.45);
+            border-radius: 6px;
+            background: rgba(18, 18, 18, 0.86);
+            color: #e6fffb;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.34);
+            font-size: 12px;
+            line-height: 1.25;
+            pointer-events: none;
+        }
+        .search-center-label::before {
+            content: "";
+            position: absolute;
+            left: 10px;
+            bottom: -19px;
+            width: 10px;
+            height: 10px;
+            border: 2px solid #06211f;
+            border-radius: 50%;
+            background: #00ffcc;
+            box-shadow: 0 0 0 2px rgba(0, 255, 204, 0.35);
+        }
+        .search-center-label::after {
+            content: "";
+            position: absolute;
+            left: 15px;
+            bottom: -10px;
+            width: 1px;
+            height: 10px;
+            background: rgba(0, 255, 204, 0.7);
+        }
+        .search-center-label strong {
+            color: #00ffcc;
+            font-size: 11px;
+            text-transform: uppercase;
+        }
+        .search-center-label span {
+            white-space: nowrap;
+        }
         .footer { margin-top: auto; font-size: 11px; color: #666; border-top: 1px solid #333; padding-top: 15px; }
     </style>
 </head>
@@ -243,7 +478,6 @@
 
     <div id="sidebar">
         <h2>SafeCurrent UI</h2>
-        <p><strong>Operational Instruction:</strong><br>Enter coordinates manually or press Pick From Map, then click the sea area to set the Last Seen Marker.</p>
         <div id="status-message" role="status">Ready</div>
         
         <div class="map-tool-row">
@@ -270,6 +504,20 @@
                 </div>
             </div>
         </div>
+        <div id="lifeguard-current-row" class="input-group lifeguard-current-row">
+            <button id="pick-current-button" class="lifeguard-data-button" onclick="toggleLocalCurrentMode()" type="button" aria-label="Draw lifeguard current arrow" title="Draw lifeguard current arrow">
+                <span class="current-icon" aria-hidden="true"></span>
+                <span>Lifeguard Data</span>
+            </button>
+            <div id="local-current-strength-field" class="time-field hidden">
+                <label for="local-current-strength">Strength</label>
+                <select id="local-current-strength" onchange="handleLocalCurrentControlChange()">
+                    <option value="weak">Weak</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="strong">Strong</option>
+                </select>
+            </div>
+        </div>
         <div class="input-group">
             <div class="time-row">
                 <div class="time-field">
@@ -285,8 +533,12 @@
         <div class="input-group">
             <div class="time-row">
                 <div class="time-field">
-                    <label for="weight">Weight</label>
-                    <input type="number" id="weight" value="70" min="1" max="300" step="0.1">
+                    <label for="build">Build</label>
+                    <select id="build">
+                        <option value="lean">Lean</option>
+                        <option value="average" selected>Average</option>
+                        <option value="fat">Fat</option>
+                    </select>
                 </div>
                 <div class="time-field">
                     <label for="age">Age</label>
@@ -364,7 +616,31 @@
         </div>
     </div>
 
-    <div id="map"></div>
+    <div id="map">
+        <div id="map-loading-overlay" class="map-loading-overlay hidden" role="status" aria-live="polite">
+            <div class="map-loading-card">
+                <span id="map-loading-label">Calculating drift...</span>
+                <div class="wave-loader" aria-hidden="true">
+                    <div class="wave-layer wave-back">
+                        <svg viewBox="0 0 720 120" preserveAspectRatio="none">
+                            <path fill="#0a5f6f" d="M0 42 C42 42 42 8 84 8 C126 8 126 42 168 42 C210 42 210 8 252 8 C294 8 294 42 336 42 C378 42 378 8 420 8 C462 8 462 42 504 42 C546 42 546 8 588 8 C630 8 630 42 672 42 C696 42 708 32 720 22 L720 120 L0 120 Z"></path>
+                        </svg>
+                    </div>
+                    <div class="wave-layer wave-middle">
+                        <svg viewBox="0 0 720 120" preserveAspectRatio="none">
+                            <path fill="#168b8f" d="M0 58 C60 20 102 20 162 58 C222 96 264 96 324 58 C384 20 426 20 486 58 C546 96 588 96 648 58 C684 35 705 32 720 36 L720 120 L0 120 Z"></path>
+                        </svg>
+                    </div>
+                    <div class="wave-layer wave-front">
+                        <svg viewBox="0 0 720 120" preserveAspectRatio="none">
+                            <path fill="#39b6a6" d="M0 70 C58 38 106 38 164 70 C222 102 270 102 328 70 C386 38 434 38 492 70 C550 102 598 102 656 70 C684 54 704 50 720 54 L720 120 L0 120 Z"></path>
+                        </svg>
+                    </div>
+                    <div id="map-loading-percent" class="map-loading-percent">0%</div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <script>
         // Initialize map on Israel Coast
@@ -466,6 +742,26 @@
         };
         gridSizeControl.addTo(map);
 
+        const shareLinkControl = L.control({position: 'topleft'});
+        shareLinkControl.onAdd = function() {
+            const container = L.DomUtil.create('div', 'share-link-map-control');
+            container.innerHTML = `
+                <button id="share-link-button" class="share-link-button" onclick="copyShareLink()" type="button" disabled aria-label="Copy share link" title="Copy share link">
+                    <svg class="share-link-icon" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+                        <line x1="22" y1="34" x2="45" y2="20"></line>
+                        <line x1="22" y1="34" x2="45" y2="46"></line>
+                        <circle cx="16" cy="36" r="10"></circle>
+                        <circle cx="49" cy="17" r="10"></circle>
+                        <circle cx="49" cy="49" r="10"></circle>
+                    </svg>
+                </button>
+            `;
+            L.DomEvent.disableClickPropagation(container);
+            L.DomEvent.disableScrollPropagation(container);
+            return container;
+        };
+        shareLinkControl.addTo(map);
+
         function getGridStep(zoom) {
             if (zoom >= 17) return 0.001;
             if (zoom >= 15) return 0.0025;
@@ -545,17 +841,29 @@
         let areaPathLayer = null;
         let finalAreaPolygon = null;
         let timeRangeLayer = null;
+        let searchCenterMarker = null;
         let isPickingLocation = false;
         let isDrawingPolygon = false;
+        let isMarkingLocalCurrent = false;
+        let localCurrentStartPoint = null;
+        let localCurrentData = null;
+        let localCurrentLayer = null;
         let selectedPolygon = null;
         let polygonDraftLine = null;
         let polygonVertexMarkers = [];
         let polygonEditMarkers = [];
         let polygonEdgeMarkers = [];
         let polygonPoints = [];
-        const API_BASE_URL = 'http://127.0.0.1:8000';
+        let loadingProgress = 0;
+        let loadingProgressTimer = null;
+        let loadingHideTimer = null;
+        let currentShareSnapshot = null;
+        let activeSharedSnapshotId = null;
+        let isSharedSnapshotMode = false;
+        const API_BASE_URL = window.location.protocol === 'file:' ? 'http://127.0.0.1:8000' : window.location.origin;
         const MAX_SIMULATION_DAYS = 7;
         const MAX_SIMULATION_HOURS = MAX_SIMULATION_DAYS * 24;
+        const LOADING_COMPLETE_HOLD_MS = 650;
 
         function toLocalDateTimeParts(date) {
             const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
@@ -585,13 +893,158 @@
             statusMessage.classList.toggle('error', isError);
         }
 
+        function setSearchCenterInfo(center) {
+            clearSearchCenterInfo();
+
+            const lat = Number(center.lat);
+            const lon = Number(center.lon);
+            const labelHtml = `
+                <div class="search-center-label" aria-label="Search center coordinates">
+                    <strong>Navigate to<br>search area</strong>
+                    <span>Lat ${lat.toFixed(5)}</span>
+                    <span>Lon ${lon.toFixed(5)}</span>
+                </div>
+            `;
+
+            searchCenterMarker = L.marker([lat, lon], {
+                icon: L.divIcon({
+                    className: 'search-center-marker',
+                    html: labelHtml,
+                    iconSize: null,
+                    iconAnchor: [16, 82]
+                }),
+                interactive: false,
+                zIndexOffset: 900
+            }).addTo(map);
+        }
+
+        function clearSearchCenterInfo() {
+            if (searchCenterMarker) {
+                map.removeLayer(searchCenterMarker);
+                searchCenterMarker = null;
+            }
+        }
+
+        function setShareSnapshot(snapshot, shareId = null) {
+            currentShareSnapshot = snapshot;
+            activeSharedSnapshotId = shareId;
+
+            const shareButton = document.getElementById('share-link-button');
+            const label = activeSharedSnapshotId ? 'Copy this link' : 'Copy share link';
+            shareButton.disabled = !currentShareSnapshot;
+            shareButton.setAttribute('aria-label', label);
+            shareButton.title = label;
+        }
+
+        async function copyTextToClipboard(text) {
+            if (navigator.clipboard && window.isSecureContext) {
+                await navigator.clipboard.writeText(text);
+                return;
+            }
+
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.setAttribute('readonly', '');
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-9999px';
+            document.body.appendChild(textArea);
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+        }
+
+        async function copyShareLink() {
+            if (!currentShareSnapshot) {
+                setStatus('Calculate first, then copy a share link.', true);
+                return;
+            }
+
+            try {
+                let shareId = activeSharedSnapshotId;
+
+                if (!shareId) {
+                    const response = await fetch(`${API_BASE_URL}/share`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(currentShareSnapshot)
+                    });
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(data.detail || 'Could not create share link.');
+                    }
+
+                    shareId = data.share_id;
+                    activeSharedSnapshotId = shareId;
+                }
+
+                const shareUrl = new URL(`${API_BASE_URL}/`);
+                shareUrl.searchParams.set('snapshot', shareId);
+
+                await copyTextToClipboard(shareUrl.toString());
+                setStatus('Share link copied. Send it in WhatsApp.');
+            } catch (error) {
+                setStatus(error.message, true);
+            }
+        }
+
+        function setMapLoadingProgress(progress) {
+            loadingProgress = Math.max(0, Math.min(100, progress));
+            document.getElementById('map-loading-percent').textContent = `${Math.round(loadingProgress)}%`;
+        }
+
+        function setLoadingControlsDisabled(isDisabled) {
+            document.getElementById('simulate-button').disabled = isDisabled;
+            document.getElementById('pick-location-button').disabled = isDisabled;
+            document.getElementById('pick-polygon-button').disabled = isDisabled;
+            document.getElementById('pick-current-button').disabled = isDisabled;
+            document.getElementById('local-current-strength').disabled = isDisabled;
+            document.getElementById('time-uncertainty-toggle').disabled = isDisabled;
+            document.getElementById('range-minutes').disabled = isDisabled;
+        }
+
+        function startMapLoading() {
+            window.clearTimeout(loadingHideTimer);
+            window.clearInterval(loadingProgressTimer);
+            document.getElementById('map-loading-label').textContent = 'Calculating drift...';
+            document.getElementById('map-loading-overlay').classList.remove('hidden');
+            setMapLoadingProgress(0);
+
+            loadingProgressTimer = window.setInterval(() => {
+                const step = loadingProgress < 70 ? 2.4 : loadingProgress < 92 ? 0.9 : 0.2;
+                setMapLoadingProgress(Math.min(96, loadingProgress + step));
+            }, 320);
+        }
+
+        function finishMapLoading() {
+            window.clearInterval(loadingProgressTimer);
+            document.getElementById('map-loading-label').textContent = 'Calculation complete';
+            setMapLoadingProgress(100);
+
+            loadingHideTimer = window.setTimeout(() => {
+                document.getElementById('map-loading-overlay').classList.add('hidden');
+                document.getElementById('loading-indicator').classList.add('hidden');
+                if (!isSharedSnapshotMode) {
+                    setLoadingControlsDisabled(false);
+                }
+            }, LOADING_COMPLETE_HOLD_MS);
+        }
+
+        function stopMapLoading() {
+            window.clearTimeout(loadingHideTimer);
+            finishMapLoading();
+        }
+
         function setLoading(isLoading) {
-            document.getElementById('loading-indicator').classList.toggle('hidden', !isLoading);
-            document.getElementById('simulate-button').disabled = isLoading;
-            document.getElementById('pick-location-button').disabled = isLoading;
-            document.getElementById('pick-polygon-button').disabled = isLoading;
-            document.getElementById('time-uncertainty-toggle').disabled = isLoading;
-            document.getElementById('range-minutes').disabled = isLoading;
+            if (isLoading) {
+                document.getElementById('loading-indicator').classList.remove('hidden');
+                setLoadingControlsDisabled(true);
+                document.getElementById('share-link-button').disabled = true;
+                startMapLoading();
+            } else {
+                stopMapLoading();
+                document.getElementById('share-link-button').disabled = !currentShareSnapshot;
+            }
         }
 
         function isTimeUncertaintyEnabled() {
@@ -648,12 +1101,7 @@
         function setLastSeenMarker(lat, lon, title = 'Last Seen Point', openPopup = true) {
             if (startMarker) map.removeLayer(startMarker);
 
-            startMarker = L.marker([lat, lon]).addTo(map)
-                .bindPopup(`<b>${title}</b><br>Calculating drift vectors...`);
-
-            if (openPopup) {
-                startMarker.openPopup();
-            }
+            startMarker = L.marker([lat, lon], {title}).addTo(map);
         }
 
         function clearAreaResultLayers() {
@@ -676,6 +1124,12 @@
         }
 
         function clearDriftResultLayers() {
+            clearSearchCenterInfo();
+
+            if (!isSharedSnapshotMode) {
+                setShareSnapshot(null);
+            }
+
             if (pathLine) {
                 map.removeLayer(pathLine);
                 pathLine = null;
@@ -717,6 +1171,170 @@
                 Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
 
             return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+        }
+
+        function getBearingDegrees(fromPoint, toPoint) {
+            const lat1 = fromPoint[0] * Math.PI / 180;
+            const lat2 = toPoint[0] * Math.PI / 180;
+            const deltaLon = (toPoint[1] - fromPoint[1]) * Math.PI / 180;
+            const y = Math.sin(deltaLon) * Math.cos(lat2);
+            const x =
+                Math.cos(lat1) * Math.sin(lat2)
+                - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLon);
+
+            return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+        }
+
+        function getLocalCurrentSpeed(strength) {
+            return {
+                weak: 0.2,
+                medium: 0.5,
+                strong: 0.8
+            }[strength] || 0.5;
+        }
+
+        function createLocalCurrentArrowIcon(directionDeg) {
+            return L.divIcon({
+                className: '',
+                html: `<span class="local-current-arrowhead" style="transform: rotate(${directionDeg}deg);"></span>`,
+                iconSize: [20, 20],
+                iconAnchor: [10, 10]
+            });
+        }
+
+        function createLocalCurrentStartIcon() {
+            return L.divIcon({
+                className: '',
+                html: '<span class="local-current-start-dot"></span>',
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            });
+        }
+
+        function setLocalCurrentButtonState(isActive) {
+            const currentButton = document.getElementById('pick-current-button');
+            const currentRow = document.getElementById('lifeguard-current-row');
+            const strengthField = document.getElementById('local-current-strength-field');
+            const shouldShowStrength = isActive || Boolean(localCurrentData);
+
+            currentButton.classList.toggle('active', isActive);
+            currentRow.classList.toggle('current-open', shouldShowStrength);
+            strengthField.classList.toggle('hidden', !shouldShowStrength);
+            currentButton.setAttribute('aria-label', isActive ? 'Click map to mark current direction' : 'Draw lifeguard current arrow');
+            currentButton.title = isActive ? 'Click map to mark current direction' : 'Draw lifeguard current arrow';
+        }
+
+        function updateLocalCurrentInfo() {
+            if (!localCurrentData) {
+                return;
+            }
+        }
+
+        function drawLocalCurrentArrow(startPoint, endPoint, directionDeg) {
+            if (localCurrentLayer) {
+                map.removeLayer(localCurrentLayer);
+                localCurrentLayer = null;
+            }
+
+            localCurrentLayer = L.layerGroup().addTo(map);
+            L.polyline([startPoint, endPoint], {
+                color: '#ffbf47',
+                weight: 4,
+                opacity: 0.95,
+                dashArray: '8, 6'
+            }).addTo(localCurrentLayer).bindPopup('<b>Lifeguard local current</b><br>Observed field current override.');
+            L.marker(startPoint, {icon: createLocalCurrentStartIcon(), interactive: false}).addTo(localCurrentLayer);
+            L.marker(endPoint, {icon: createLocalCurrentArrowIcon(directionDeg), interactive: false}).addTo(localCurrentLayer);
+        }
+
+        function setLocalCurrentFromPoints(startPoint, endPoint) {
+            const directionDeg = getBearingDegrees(startPoint, endPoint);
+            localCurrentData = {
+                start: {lat: startPoint[0], lon: startPoint[1]},
+                end: {lat: endPoint[0], lon: endPoint[1]},
+                directionDeg
+            };
+
+            drawLocalCurrentArrow(startPoint, endPoint, directionDeg);
+            updateLocalCurrentInfo();
+            clearDriftResultLayers();
+            setStatus('Local lifeguard current added. Recalculate when ready.');
+        }
+
+        function clearLocalCurrent() {
+            if (localCurrentLayer) {
+                map.removeLayer(localCurrentLayer);
+                localCurrentLayer = null;
+            }
+
+            localCurrentData = null;
+            localCurrentStartPoint = null;
+            isMarkingLocalCurrent = false;
+            setLocalCurrentButtonState(false);
+            map.getContainer().style.cursor = '';
+            updateLocalCurrentInfo();
+            clearDriftResultLayers();
+            setStatus('Local lifeguard current cleared.');
+        }
+
+        function startLocalCurrentMode() {
+            if (isPickingLocation) {
+                setPickLocationMode(false);
+            }
+
+            if (isDrawingPolygon) {
+                cancelPolygonDrawing(false);
+            }
+
+            isMarkingLocalCurrent = true;
+            localCurrentStartPoint = null;
+            setLocalCurrentButtonState(true);
+            updateLocalCurrentInfo();
+            map.getContainer().style.cursor = 'crosshair';
+            setStatus('Click where the local current starts, then click where it flows.');
+        }
+
+        function finishLocalCurrentMode() {
+            isMarkingLocalCurrent = false;
+            localCurrentStartPoint = null;
+            setLocalCurrentButtonState(false);
+            updateLocalCurrentInfo();
+            map.getContainer().style.cursor = '';
+        }
+
+        function toggleLocalCurrentMode() {
+            if (isMarkingLocalCurrent) {
+                finishLocalCurrentMode();
+                setStatus('Ready');
+                return;
+            }
+
+            startLocalCurrentMode();
+        }
+
+        function handleLocalCurrentControlChange() {
+            updateLocalCurrentInfo();
+
+            if (localCurrentData) {
+                clearDriftResultLayers();
+                setStatus('Local current settings changed. Recalculate when ready.');
+            }
+        }
+
+        function getLocalCurrentPayload() {
+            if (!localCurrentData) return null;
+
+            const strength = document.getElementById('local-current-strength').value;
+            const duration = 'first_hour';
+
+            return {
+                directionDeg: Number(localCurrentData.directionDeg.toFixed(2)),
+                strength,
+                duration,
+                speedMps: getLocalCurrentSpeed(strength),
+                start: localCurrentData.start,
+                end: localCurrentData.end
+            };
         }
 
         function getPolygonAreaSqMeters(points) {
@@ -920,6 +1538,10 @@
                 cancelPolygonDrawing(false);
             }
 
+            if (isPickingLocation && isMarkingLocalCurrent) {
+                finishLocalCurrentMode();
+            }
+
             pickButton.classList.toggle('active', isPickingLocation);
             pickButton.setAttribute('aria-label', isPickingLocation ? 'Click map to pick location' : 'Pick location from map');
             pickButton.title = isPickingLocation ? 'Click map to pick location' : 'Pick location from map';
@@ -960,6 +1582,10 @@
         function startPolygonDrawing() {
             if (isPickingLocation) {
                 setPickLocationMode(false);
+            }
+
+            if (isMarkingLocalCurrent) {
+                finishLocalCurrentMode();
             }
 
             clearPolygonSelection();
@@ -1376,18 +2002,24 @@
             return drowningDate;
         }
 
-        function createSimulationParams(lat, lon, polygonPayload) {
+        function createSimulationParams(lat, lon, polygonPayload, localCurrentPayload = null) {
             const params = new URLSearchParams({lat, lon});
 
             if (polygonPayload) {
                 params.set('polygon', JSON.stringify(polygonPayload));
             }
 
+            if (localCurrentPayload) {
+                params.set('local_current_direction_deg', localCurrentPayload.directionDeg);
+                params.set('local_current_strength', localCurrentPayload.strength);
+                params.set('local_current_duration', localCurrentPayload.duration);
+            }
+
             return params;
         }
 
-        function createElapsedSimulationParams(lat, lon, elapsedHours, polygonPayload) {
-            const params = createSimulationParams(lat, lon, polygonPayload);
+        function createElapsedSimulationParams(lat, lon, elapsedHours, polygonPayload, localCurrentPayload = null) {
+            const params = createSimulationParams(lat, lon, polygonPayload, localCurrentPayload);
             params.set('hours', Number(elapsedHours.toFixed(4)));
             return params;
         }
@@ -1410,7 +2042,8 @@
         function buildSimulationParams(lat, lon) {
             const mode = document.getElementById('drowning-mode').value;
             const polygonPayload = getSelectedPolygonPayload();
-            const params = createSimulationParams(lat, lon, polygonPayload);
+            const localCurrentPayload = getLocalCurrentPayload();
+            const params = createSimulationParams(lat, lon, polygonPayload, localCurrentPayload);
             let elapsedHours = 0;
 
             if (mode === 'elapsed') {
@@ -1454,20 +2087,20 @@
                 rangeRequests = [
                     {
                         label: 'Latest possible time',
-                        params: createElapsedSimulationParams(lat, lon, latestElapsedHours, polygonPayload),
+                        params: createElapsedSimulationParams(lat, lon, latestElapsedHours, polygonPayload, localCurrentPayload),
                         elapsedHours: latestElapsedHours,
                         color: '#58a6ff'
                     },
                     {
                         label: 'Earliest possible time',
-                        params: createElapsedSimulationParams(lat, lon, earliestElapsedHours, polygonPayload),
+                        params: createElapsedSimulationParams(lat, lon, earliestElapsedHours, polygonPayload, localCurrentPayload),
                         elapsedHours: earliestElapsedHours,
                         color: '#ff5db8'
                     }
                 ];
             }
 
-            return {params, elapsedHours, uncertaintyHours, rangeRequests};
+            return {params, elapsedHours, uncertaintyHours, rangeRequests, localCurrent: localCurrentPayload};
         }
 
         async function requestSimulation(params) {
@@ -1479,6 +2112,44 @@
             }
 
             return result;
+        }
+
+        function smoothPathPoints(points, segmentsPerPair = 8) {
+            if (!Array.isArray(points) || points.length < 3) {
+                return points;
+            }
+
+            const smoothed = [];
+
+            for (let index = 0; index < points.length - 1; index++) {
+                const previous = points[Math.max(0, index - 1)];
+                const current = points[index];
+                const next = points[index + 1];
+                const afterNext = points[Math.min(points.length - 1, index + 2)];
+
+                for (let segment = 0; segment < segmentsPerPair; segment++) {
+                    const t = segment / segmentsPerPair;
+                    const t2 = t * t;
+                    const t3 = t2 * t;
+                    const lat = 0.5 * (
+                        2 * current[0]
+                        + (-previous[0] + next[0]) * t
+                        + (2 * previous[0] - 5 * current[0] + 4 * next[0] - afterNext[0]) * t2
+                        + (-previous[0] + 3 * current[0] - 3 * next[0] + afterNext[0]) * t3
+                    );
+                    const lon = 0.5 * (
+                        2 * current[1]
+                        + (-previous[1] + next[1]) * t
+                        + (2 * previous[1] - 5 * current[1] + 4 * next[1] - afterNext[1]) * t2
+                        + (-previous[1] + 3 * current[1] - 3 * next[1] + afterNext[1]) * t3
+                    );
+
+                    smoothed.push([lat, lon]);
+                }
+            }
+
+            smoothed.push(points[points.length - 1]);
+            return smoothed;
         }
 
         function drawTimeRangeResults(rangeResults, heatPoints) {
@@ -1495,9 +2166,10 @@
 
                 const trajectory = result.trajectory;
                 const latLngs = trajectory.map(point => [point.lat, point.lon]);
+                const smoothLatLngs = smoothPathPoints(latLngs);
                 const finalPoint = latLngs[latLngs.length - 1];
 
-                L.polyline(latLngs, {
+                L.polyline(smoothLatLngs, {
                     color: request.color,
                     weight: 3,
                     opacity: 0.82,
@@ -1512,9 +2184,10 @@
 
                     result.area_trajectories.forEach(area => {
                         const areaLatLngs = area.trajectory.map(point => [point.lat, point.lon]);
+                        const smoothAreaLatLngs = smoothPathPoints(areaLatLngs);
 
                         if (areaLatLngs.length > 1) {
-                            L.polyline(areaLatLngs, {
+                            L.polyline(smoothAreaLatLngs, {
                                 color: request.color,
                                 weight: 2,
                                 opacity: 0.55,
@@ -1547,22 +2220,47 @@
             return rangeBoundsPoints;
         }
 
-        // Pick mode lets regular map clicks pan/inspect without changing the selected location.
-        map.on('click', function(e) {
-            const clickedLat = e.latlng.lat;
-            const clickedLng = e.latlng.lng;
+        function serializeRangeResults(rangeResults) {
+            return rangeResults.map(({request, result}) => ({
+                request: {
+                    label: request.label,
+                    elapsedHours: request.elapsedHours,
+                    color: request.color
+                },
+                result
+            }));
+        }
 
-            if (isDrawingPolygon) {
-                addPolygonPoint(clickedLat, clickedLng);
-                return;
+        function buildShareSnapshot(lat, lon, simulationInput, result, rangeResults, statusText) {
+            const mode = document.getElementById('drowning-mode').value;
+            const input = {
+                lat,
+                lon,
+                mode,
+                build: document.getElementById('build').value,
+                age: document.getElementById('age').value,
+                elapsedHours: Number(simulationInput.elapsedHours.toFixed(4)),
+                uncertaintyHours: Number(simulationInput.uncertaintyHours.toFixed(4)),
+                polygon: getSelectedPolygonPayload(),
+                localCurrent: simulationInput.localCurrent
+            };
+
+            if (mode === 'elapsed') {
+                input.days = document.getElementById('days').value;
+                input.hours = document.getElementById('hours').value;
+                input.minutes = document.getElementById('minutes').value;
+            } else {
+                input.drowningTime = document.getElementById('drowning-time').value;
+                input.drowningDay = document.getElementById('drowning-day').value;
+                input.drowningMonth = document.getElementById('drowning-month').value;
+                input.drowningYear = document.getElementById('drowning-year').value;
             }
-
             if (!isPickingLocation) return;
-            
+
             // Update the UI inputs so the user sees the exact coordinates
             document.getElementById('lat').value = clickedLat.toFixed(4);
             document.getElementById('lon').value = clickedLng.toFixed(4);
-            
+
             // Draw or move the visual Red Pin on the map instantly
             clearPolygonSelection();
             clearAreaResultLayers();
@@ -1579,6 +2277,15 @@
                     finishPolygonSelection();
                 }
 
+            return {
+                version: 1,
+                createdAt: new Date().toISOString(),
+                input,
+                result,
+                rangeResults: serializeRangeResults(rangeResults),
+                statusText
+            };
+        }
                 const {lat, lon} = getSelectedPosition();
 
                 // Time window from the existing UI: median entry time + uncertainty.
@@ -1596,6 +2303,24 @@
                     throw new Error('Drowning time must be in the past.');
                 }
 
+        function renderSimulationResult(result, rangeResults, elapsedHours, uncertaintyHours, statusText = null) {
+            if (result.status !== "success" || result.trajectory.length <= 1) {
+                return null;
+            }
+
+            const trajectory = result.trajectory;
+            const latLngs = trajectory.map(p => [p.lat, p.lon]);
+            const smoothLatLngs = smoothPathPoints(latLngs);
+            let finalAreaPoints = [];
+
+            pathLine = L.polyline(smoothLatLngs, {color: '#00ffcc', weight: 4, dashArray: '6, 8'}).addTo(map);
+
+            if (Array.isArray(result.area_trajectories) && result.area_trajectories.length > 0) {
+                areaPathLayer = L.layerGroup().addTo(map);
+
+                result.area_trajectories.forEach(area => {
+                    const areaLatLngs = area.trajectory.map(p => [p.lat, p.lon]);
+                    const smoothAreaLatLngs = smoothPathPoints(areaLatLngs);
                 const uncertaintyHours = (typeof getTimeUncertaintyHours === 'function') ? getTimeUncertaintyHours() : 0;
                 const halfWindowMs = Math.max(uncertaintyHours, 0.05) * 3600 * 1000;
                 const windowStart = new Date(medianEntryMs - halfWindowMs);
@@ -1609,6 +2334,14 @@
                 setLoading(true);
                 setStatus('Running OpenDrift Leeway simulation (downloading currents + wind)...');
 
+                    if (areaLatLngs.length > 1) {
+                        L.polyline(smoothAreaLatLngs, {
+                            color: '#ffbf47',
+                            weight: 2,
+                            opacity: 0.75,
+                            dashArray: '3, 6'
+                        }).addTo(areaPathLayer);
+                    }
                 // Build the request body.
                 const polygonPayload = (typeof getSelectedPolygonPayload === 'function')
                     ? getSelectedPolygonPayload()
@@ -1626,6 +2359,20 @@
                     body.point_radius_m = 150;
                 }
 
+                    if (areaLatLngs.length > 0) {
+                        finalAreaPoints.push(areaLatLngs[areaLatLngs.length - 1]);
+                    }
+                });
+
+                if (finalAreaPoints.length >= 3) {
+                    finalAreaPolygon = L.polygon(finalAreaPoints, {
+                        color: '#ffbf47',
+                        weight: 3,
+                        fillColor: '#ffbf47',
+                        fillOpacity: 0.2
+                    }).addTo(map).bindPopup('<b>Predicted Area</b><br>Polygon drift projection.');
+                }
+            }
                 const response = await fetch(`${API_BASE_URL}/simulate`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -1636,6 +2383,295 @@
                     throw new Error(result.detail || 'Simulation failed.');
                 }
 
+            let heatPoints = [];
+            trajectory.forEach((point, index) => {
+                let intensity = index === trajectory.length - 1 ? 1.0 : 0.3;
+                heatPoints.push([point.lat, point.lon, intensity]);
+
+                if (index === trajectory.length - 1) {
+                    for (let i = 0; i < 40; i++) {
+                        let dispersion = 0.0025 * elapsedHours;
+                        let randomLat = point.lat + (Math.random() - 0.5) * dispersion;
+                        let randomLon = point.lon + (Math.random() - 0.5) * dispersion;
+                        heatPoints.push([randomLat, randomLon, 0.65]);
+                    }
+                }
+            });
+            finalAreaPoints.forEach(point => heatPoints.push([point[0], point[1], 0.8]));
+            const rangeBoundsPoints = drawTimeRangeResults(rangeResults, heatPoints);
+
+            heatLayer = L.heatLayer(heatPoints, {
+                radius: 28,
+                blur: 14,
+                maxZoom: 12,
+                gradient: {0.3: 'blue', 0.6: 'lime', 1: 'red'}
+            }).addTo(map);
+
+            const allBoundsPoints = latLngs.concat(finalAreaPoints, rangeBoundsPoints);
+            const finalPoint = latLngs[latLngs.length - 1];
+            const searchCenterPoints = finalAreaPoints.length >= 3
+                ? finalAreaPoints
+                : [finalPoint].concat(rangeBoundsPoints);
+            const searchCenterLatLng = searchCenterPoints.length > 1
+                ? L.latLngBounds(searchCenterPoints).getCenter()
+                : L.latLng(finalPoint);
+            const uncertaintyText = uncertaintyHours > 0
+                ? ` +/- ${formatDurationHours(uncertaintyHours)}`
+                : '';
+            const localCurrentText = result.local_current_used ? ' + lifeguard current' : '';
+            const resultStatusText = statusText || `Calculated ${result.hours_simulated} hours${uncertaintyText} from ${result.data_source_used}${localCurrentText}.`;
+
+            if (finalAreaPoints.length >= 3 || rangeBoundsPoints.length > 0) {
+                map.fitBounds(L.latLngBounds(allBoundsPoints).pad(0.18));
+            } else {
+                map.panTo([trajectory[trajectory.length - 1].lat, trajectory[trajectory.length - 1].lon]);
+            }
+
+            setSearchCenterInfo(
+                {lat: searchCenterLatLng.lat, lon: searchCenterLatLng.lng}
+            );
+            setStatus(resultStatusText);
+            return {statusText: resultStatusText};
+        }
+
+        function setSharedSnapshotMode(isEnabled) {
+            isSharedSnapshotMode = isEnabled;
+            document.body.classList.toggle('shared-snapshot-mode', isEnabled);
+
+            document.querySelectorAll('#sidebar input, #sidebar select').forEach(element => {
+                element.disabled = isEnabled;
+            });
+
+            [
+            'simulate-button',
+            'pick-location-button',
+            'pick-polygon-button',
+            'pick-current-button',
+            'time-uncertainty-toggle'
+        ].forEach(id => {
+                const element = document.getElementById(id);
+                if (element) {
+                    element.disabled = isEnabled;
+                }
+            });
+
+            document.getElementById('share-link-button').disabled = !currentShareSnapshot;
+        }
+
+        function applySnapshotInputs(snapshot) {
+            const input = snapshot.input || {};
+
+            if (Number.isFinite(input.lat)) {
+                document.getElementById('lat').value = Number(input.lat).toFixed(4);
+            }
+
+            if (Number.isFinite(input.lon)) {
+                document.getElementById('lon').value = Number(input.lon).toFixed(4);
+            }
+
+            if (input.build) {
+                document.getElementById('build').value = input.build;
+            }
+
+            if (input.age !== undefined) {
+                document.getElementById('age').value = input.age;
+            }
+
+            document.getElementById('drowning-mode').value = input.mode || 'elapsed';
+            updateDrowningInputVisibility();
+
+            if ((input.mode || 'elapsed') === 'elapsed') {
+                document.getElementById('days').value = input.days ?? 0;
+                document.getElementById('hours').value = input.hours ?? 0;
+                document.getElementById('minutes').value = input.minutes ?? 0;
+            } else {
+                document.getElementById('drowning-day').value = input.drowningDay ?? document.getElementById('drowning-day').value;
+                document.getElementById('drowning-month').value = input.drowningMonth ?? document.getElementById('drowning-month').value;
+                document.getElementById('drowning-year').value = input.drowningYear ?? document.getElementById('drowning-year').value;
+                document.getElementById('drowning-time').value = input.drowningTime ?? document.getElementById('drowning-time').value;
+                handleManualDateInput();
+            }
+
+            if (input.uncertaintyHours > 0) {
+                setTimeUncertaintyEnabled(true);
+                document.getElementById('range-minutes').value = Math.round(input.uncertaintyHours * 60);
+            } else {
+                setTimeUncertaintyEnabled(false);
+            }
+
+            if (input.localCurrent) {
+                document.getElementById('local-current-strength').value = input.localCurrent.strength || 'medium';
+                localCurrentData = {
+                    start: input.localCurrent.start,
+                    end: input.localCurrent.end,
+                    directionDeg: Number(input.localCurrent.directionDeg)
+                };
+
+                if (localCurrentData.start && localCurrentData.end && Number.isFinite(localCurrentData.directionDeg)) {
+                    drawLocalCurrentArrow(
+                        [localCurrentData.start.lat, localCurrentData.start.lon],
+                        [localCurrentData.end.lat, localCurrentData.end.lon],
+                        localCurrentData.directionDeg
+                    );
+                    setLocalCurrentButtonState(false);
+                    updateLocalCurrentInfo();
+                }
+            } else {
+                localCurrentData = null;
+                if (localCurrentLayer) {
+                    map.removeLayer(localCurrentLayer);
+                    localCurrentLayer = null;
+                }
+                setLocalCurrentButtonState(false);
+                updateLocalCurrentInfo();
+            }
+
+            clearPolygonSelection();
+            if (Array.isArray(input.polygon) && input.polygon.length >= 3) {
+                polygonPoints = input.polygon.map(point => [point.lat, point.lon]);
+                selectedPolygon = L.polygon(polygonPoints, {
+                    color: '#00ffcc',
+                    weight: 3,
+                    fillColor: '#00ffcc',
+                    fillOpacity: 0.18
+                }).addTo(map);
+                updatePolygonInfo();
+            }
+        }
+
+        async function loadSharedSnapshotFromUrl() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const snapshotId = urlParams.get('snapshot');
+
+            if (!snapshotId) return;
+
+            try {
+                setStatus('Loading shared result...');
+                const response = await fetch(`${API_BASE_URL}/share/${encodeURIComponent(snapshotId)}`);
+                const snapshot = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(snapshot.detail || 'Shared result not found.');
+                }
+
+                clearDriftResultLayers();
+                applySnapshotInputs(snapshot);
+
+                const input = snapshot.input || {};
+                setLastSeenMarker(input.lat, input.lon, input.polygon ? 'Shared Area Center' : 'Shared Last Seen Point', false);
+                const renderedResult = renderSimulationResult(
+                    snapshot.result,
+                    snapshot.rangeResults || [],
+                    input.elapsedHours || snapshot.result.hours_simulated || 0,
+                    input.uncertaintyHours || 0,
+                    snapshot.statusText
+                );
+
+                if (!renderedResult) {
+                    throw new Error('Shared result data is not valid.');
+                }
+
+                setShareSnapshot(snapshot, snapshotId);
+                setSharedSnapshotMode(true);
+                setStatus(`${renderedResult.statusText} Shared result is read-only.`);
+            } catch (error) {
+                setStatus(error.message, true);
+            }
+        }
+
+        // Pick mode lets regular map clicks pan/inspect without changing the selected location.
+        map.on('click', function(e) {
+            const clickedLat = e.latlng.lat;
+            const clickedLng = e.latlng.lng;
+
+            if (isMarkingLocalCurrent) {
+                const clickedPoint = [clickedLat, clickedLng];
+
+                if (!localCurrentStartPoint) {
+                    localCurrentStartPoint = clickedPoint;
+                    updateLocalCurrentInfo();
+                    setStatus('Now click where the local current flows.');
+                    return;
+                }
+
+                setLocalCurrentFromPoints(localCurrentStartPoint, clickedPoint);
+                finishLocalCurrentMode();
+                return;
+            }
+
+            if (isDrawingPolygon) {
+                addPolygonPoint(clickedLat, clickedLng);
+                return;
+            }
+
+            if (!isPickingLocation) return;
+
+            // Update the UI inputs so the user sees the exact coordinates
+            document.getElementById('lat').value = clickedLat.toFixed(4);
+            document.getElementById('lon').value = clickedLng.toFixed(4);
+
+            // Draw or move the visual Red Pin on the map instantly
+            clearPolygonSelection();
+            clearAreaResultLayers();
+            setLastSeenMarker(clickedLat, clickedLng);
+            setPickLocationMode(false);
+        });
+
+        async function triggerSimulation() {
+            let elapsedHours = 0;
+
+            try {
+                if (isDrawingPolygon) {
+                    if (!selectedPolygon || polygonPoints.length < 3) {
+                        throw new Error('Finish the polygon first, or add at least 3 points.');
+                    }
+
+                    finishPolygonSelection();
+                }
+
+                const {lat, lon} = getSelectedPosition();
+                const simulationInput = buildSimulationParams(lat, lon);
+                elapsedHours = simulationInput.elapsedHours;
+
+                if (isPickingLocation) {
+                    setPickLocationMode(false);
+                }
+
+                clearDriftResultLayers();
+
+                setLastSeenMarker(lat, lon);
+                setLoading(true);
+                setStatus('Calculating drift...');
+
+                const result = await requestSimulation(simulationInput.params);
+                let rangeResults = [];
+
+                if (simulationInput.rangeRequests.length > 0) {
+                    setStatus('Calculating drift time range...');
+                    rangeResults = await Promise.all(
+                        simulationInput.rangeRequests.map(async request => ({
+                            request,
+                            result: await requestSimulation(request.params)
+                        }))
+                    );
+                }
+
+                const renderedResult = renderSimulationResult(
+                    result,
+                    rangeResults,
+                    elapsedHours,
+                    simulationInput.uncertaintyHours
+                );
+
+                if (renderedResult) {
+                    setShareSnapshot(buildShareSnapshot(
+                        lat,
+                        lon,
+                        simulationInput,
+                        result,
+                        rangeResults,
+                        renderedResult.statusText
+                    ));
                 if (Array.isArray(result.heatmap) && result.heatmap.length > 0) {
                     heatLayer = L.heatLayer(result.heatmap, {
                         radius: 26, blur: 18, maxZoom: 13,
@@ -1668,6 +2704,7 @@
         document.getElementById('drowning-calendar').value = toDateInputValue(defaultDrowningDate);
         document.getElementById('drowning-time').value = defaultDrowningDate.time;
         updateDrowningInputVisibility();
+        loadSharedSnapshotFromUrl();
     </script>
 </body>
 </html>

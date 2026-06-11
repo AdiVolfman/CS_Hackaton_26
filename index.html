@@ -11,19 +11,23 @@
 
     <style>
         body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; height: 100vh; background: #121212; color: white; }
-        #sidebar { width: 320px; padding: 25px; background: #1e1e1e; display: flex; flex-direction: column; gap: 20px; box-shadow: 4px 0 15px rgba(0,0,0,0.6); z-index: 1000; }
+        #sidebar { width: 320px; padding: 25px; background: #1e1e1e; display: flex; flex-direction: column; gap: 18px; box-shadow: 4px 0 15px rgba(0,0,0,0.6); z-index: 1000; box-sizing: border-box; overflow-y: auto; }
         #map { flex-grow: 1; height: 100%; }
         h2 { margin: 0; color: #00ffcc; font-size: 24px; letter-spacing: 1px; }
         p { margin: 0; font-size: 14px; color: #ccc; line-height: 1.4; }
         .input-group { display: flex; flex-direction: column; gap: 6px; }
         label { font-size: 12px; color: #00ffcc; font-weight: bold; text-transform: uppercase; }
-        input, select { padding: 12px; background: #2a2a2a; color: white; border: 1px solid #3d3d3d; border-radius: 6px; font-size: 14px; }
+        input, select { width: 100%; box-sizing: border-box; padding: 12px; background: #2a2a2a; color: white; border: 1px solid #3d3d3d; border-radius: 6px; font-size: 14px; }
         input:focus, select:focus { border-color: #00ffcc; outline: none; }
+        input[readonly] { color: #d8d8d8; background: #252525; }
         button { padding: 14px; border-radius: 6px; border: none; font-size: 15px; font-weight: bold; background: #00ffcc; color: #121212; cursor: pointer; transition: all 0.2s ease-in-out; }
         button:hover { background: #00ddbb; transform: translateY(-1px); }
         .hidden { display: none; }
-        .time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .time-field { display: flex; flex-direction: column; gap: 6px; }
+        .time-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+        .elapsed-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+        .date-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+        .time-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+        #time-input-group { gap: 10px; }
         .beach-label {
             color: #ffffff;
             font-size: 12px;
@@ -77,10 +81,14 @@
             </select>
         </div>
         <div class="input-group drowning-input" id="elapsed-input-group">
-            <div class="time-row">
+            <div class="elapsed-row">
+                <div class="time-field">
+                    <label for="days">Days</label>
+                    <input type="number" id="days" value="0" min="0" max="7" step="1">
+                </div>
                 <div class="time-field">
                     <label for="hours">Hours</label>
-                    <input type="number" id="hours" value="4" min="0" max="24" step="1">
+                    <input type="number" id="hours" value="4" min="0" max="23" step="1">
                 </div>
                 <div class="time-field">
                     <label for="minutes">Minutes</label>
@@ -89,15 +97,27 @@
             </div>
         </div>
         <div class="input-group drowning-input hidden" id="time-input-group">
-            <div class="time-row">
+            <div class="time-field">
+                <label for="drowning-calendar">Calendar</label>
+                <input type="date" id="drowning-calendar" onchange="setManualDateFromCalendar()">
+            </div>
+            <div class="date-row">
                 <div class="time-field">
-                    <label for="drowning-date">Date</label>
-                    <input type="date" id="drowning-date" onchange="updateDrowningTimeLimits()">
+                    <label for="drowning-day">Day</label>
+                    <input type="number" id="drowning-day" min="1" max="31" step="1" oninput="handleManualDateInput()">
                 </div>
                 <div class="time-field">
-                    <label for="drowning-time">Time</label>
-                    <input type="time" id="drowning-time" step="60">
+                    <label for="drowning-month">Month</label>
+                    <input type="number" id="drowning-month" min="1" max="12" step="1" readonly>
                 </div>
+                <div class="time-field">
+                    <label for="drowning-year">Year</label>
+                    <input type="text" id="drowning-year" inputmode="numeric" maxlength="4" readonly>
+                </div>
+            </div>
+            <div class="time-field">
+                <label for="drowning-time">Time</label>
+                <input type="time" id="drowning-time" step="60">
             </div>
         </div>
         
@@ -197,14 +217,29 @@
         let pathLine = null;
         let startMarker = null;
         let heatLayer = null;
+        const MAX_SIMULATION_DAYS = 7;
+        const MAX_SIMULATION_HOURS = MAX_SIMULATION_DAYS * 24;
 
         function toLocalDateTimeParts(date) {
             const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
             const value = localDate.toISOString().slice(0, 16);
+            const dateValue = value.slice(0, 10);
+            const [year, month, day] = dateValue.split('-').map(Number);
+
             return {
-                date: value.slice(0, 10),
-                time: value.slice(11, 16)
+                date: dateValue,
+                time: value.slice(11, 16),
+                year,
+                month,
+                day
             };
+        }
+
+        function toDateInputValue(parts) {
+            const year = String(parts.year).padStart(4, '0');
+            const month = String(parts.month).padStart(2, '0');
+            const day = String(parts.day).padStart(2, '0');
+            return `${year}-${month}-${day}`;
         }
 
         function setStatus(message, isError = false) {
@@ -424,16 +459,108 @@
 
         function updateDrowningTimeLimits() {
             const nowParts = toLocalDateTimeParts(new Date());
-            const drowningDateInput = document.getElementById('drowning-date');
-            const drowningTimeInput = document.getElementById('drowning-time');
+            const earliestParts = toLocalDateTimeParts(new Date(Date.now() - MAX_SIMULATION_HOURS * 3600000));
+            const calendarInput = document.getElementById('drowning-calendar');
+            const timeInput = document.getElementById('drowning-time');
+            const day = Number(document.getElementById('drowning-day').value);
+            const month = Number(document.getElementById('drowning-month').value);
+            const yearValue = document.getElementById('drowning-year').value.trim();
+            const year = Number(yearValue);
 
-            drowningDateInput.max = nowParts.date;
+            calendarInput.min = toDateInputValue(earliestParts);
+            calendarInput.max = toDateInputValue(nowParts);
 
-            if (drowningDateInput.value === nowParts.date) {
-                drowningTimeInput.max = nowParts.time;
-            } else {
-                drowningTimeInput.removeAttribute('max');
+            if (yearValue.length !== 4 || !Number.isInteger(year)) {
+                timeInput.removeAttribute('max');
+                timeInput.removeAttribute('min');
+                return;
             }
+
+            if (day === nowParts.day && month === nowParts.month && year === nowParts.year) {
+                timeInput.max = nowParts.time;
+            } else {
+                timeInput.removeAttribute('max');
+            }
+
+            if (day === earliestParts.day && month === earliestParts.month && year === earliestParts.year) {
+                timeInput.min = earliestParts.time;
+            } else {
+                timeInput.removeAttribute('min');
+            }
+        }
+
+        function syncCalendarFromManualDate() {
+            const day = Number(document.getElementById('drowning-day').value);
+            const month = Number(document.getElementById('drowning-month').value);
+            const yearValue = document.getElementById('drowning-year').value.trim();
+            const year = Number(yearValue);
+            const calendarInput = document.getElementById('drowning-calendar');
+
+            if (!Number.isInteger(day) || !Number.isInteger(month) || yearValue.length !== 4 || !Number.isInteger(year)) {
+                return;
+            }
+
+            const manualDate = new Date(year, month - 1, day);
+
+            if (
+                Number.isNaN(manualDate.getTime())
+                || manualDate.getFullYear() !== year
+                || manualDate.getMonth() !== month - 1
+                || manualDate.getDate() !== day
+            ) {
+                calendarInput.value = '';
+                return;
+            }
+
+            calendarInput.value = toDateInputValue({year, month, day});
+        }
+
+        function handleManualDateInput() {
+            syncCalendarFromManualDate();
+            updateDrowningTimeLimits();
+        }
+
+        function setManualDateFromCalendar() {
+            const calendarValue = document.getElementById('drowning-calendar').value;
+
+            if (!calendarValue) {
+                updateDrowningTimeLimits();
+                return;
+            }
+
+            const [year, month, day] = calendarValue.split('-').map(Number);
+            document.getElementById('drowning-day').value = day;
+            document.getElementById('drowning-month').value = month;
+            document.getElementById('drowning-year').value = year;
+            updateDrowningTimeLimits();
+        }
+
+        function buildDateFromManualInputs() {
+            const day = Number(document.getElementById('drowning-day').value);
+            const month = Number(document.getElementById('drowning-month').value);
+            const yearValue = document.getElementById('drowning-year').value.trim();
+            const year = Number(yearValue);
+            const timeValue = document.getElementById('drowning-time').value;
+            const [hour, minute] = timeValue.split(':').map(Number);
+
+            if (!Number.isInteger(day) || !Number.isInteger(month) || yearValue.length !== 4 || !Number.isInteger(year) || !timeValue) {
+                throw new Error('Enter a valid day, month, year, and time.');
+            }
+
+            const drowningDate = new Date(year, month - 1, day, hour, minute);
+
+            if (
+                Number.isNaN(drowningDate.getTime())
+                || drowningDate.getFullYear() !== year
+                || drowningDate.getMonth() !== month - 1
+                || drowningDate.getDate() !== day
+                || drowningDate.getHours() !== hour
+                || drowningDate.getMinutes() !== minute
+            ) {
+                throw new Error('Enter a valid day, month, year, and time.');
+            }
+
+            return drowningDate;
         }
 
         function buildSimulationParams(lat, lon) {
@@ -442,19 +569,15 @@
             let elapsedHours = 0;
 
             if (mode === 'elapsed') {
+                const days = Number(document.getElementById('days').value);
                 const hours = Number(document.getElementById('hours').value);
                 const minutes = Number(document.getElementById('minutes').value);
-                elapsedHours = hours + minutes / 60;
+                elapsedHours = days * 24 + hours + minutes / 60;
+                params.set('days', days);
                 params.set('hours', hours);
                 params.set('minutes', minutes);
             } else {
-                const drowningDateValue = document.getElementById('drowning-date').value;
-                const drowningTimeValue = document.getElementById('drowning-time').value;
-                const drowningDate = new Date(`${drowningDateValue}T${drowningTimeValue}`);
-
-                if (!drowningDateValue || !drowningTimeValue || Number.isNaN(drowningDate.getTime())) {
-                    throw new Error('Choose a valid drowning date and time.');
-                }
+                const drowningDate = buildDateFromManualInputs();
 
                 elapsedHours = (Date.now() - drowningDate.getTime()) / 3600000;
                 params.set('drowning_time', drowningDate.toISOString());
@@ -464,8 +587,8 @@
                 throw new Error('The drowning time must be in the past.');
             }
 
-            if (elapsedHours > 24) {
-                throw new Error('Use a value up to 24 hours.');
+            if (elapsedHours > MAX_SIMULATION_HOURS) {
+                throw new Error(`Use a value up to ${MAX_SIMULATION_DAYS} days.`);
             }
 
             return {params, elapsedHours};
@@ -550,9 +673,12 @@
             }
         }
 
-        const defaultDrowningTime = toLocalDateTimeParts(new Date(Date.now() - 4 * 3600000));
-        document.getElementById('drowning-date').value = defaultDrowningTime.date;
-        document.getElementById('drowning-time').value = defaultDrowningTime.time;
+        const defaultDrowningDate = toLocalDateTimeParts(new Date());
+        document.getElementById('drowning-day').value = defaultDrowningDate.day;
+        document.getElementById('drowning-month').value = defaultDrowningDate.month;
+        document.getElementById('drowning-year').value = defaultDrowningDate.year;
+        document.getElementById('drowning-calendar').value = toDateInputValue(defaultDrowningDate);
+        document.getElementById('drowning-time').value = defaultDrowningDate.time;
         updateDrowningInputVisibility();
     </script>
 </body>

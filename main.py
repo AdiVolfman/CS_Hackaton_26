@@ -8,7 +8,8 @@ import requests
 import copernicusmarine
 
 app = FastAPI(title="SafeCurrent - Search & Rescue API")
-MAX_SIMULATION_HOURS = 24
+MAX_SIMULATION_DAYS = 7
+MAX_SIMULATION_HOURS = MAX_SIMULATION_DAYS * 24
 
 # CRITICAL FOR HACKATHON: Allows your Frontend (React/Vue/HTML) to talk to this Backend without CORS blocks
 app.add_middleware(
@@ -43,9 +44,15 @@ def get_current_data_fallback(lat, lon, start_time, end_time):
     except Exception as e:
         print(f"Copernicus failed ({e}). Switching to Open-Meteo Marine API Backup...")
         
-        # Open-Meteo fallback url
-        url = f"https://marine-api.open-meteo.com/v1/marine?latitude={lat}&longitude={lon}&hourly=ocean_current_velocity,ocean_current_direction"
-        response = requests.get(url).json()
+        params = {
+            "latitude": lat,
+            "longitude": lon,
+            "hourly": "ocean_current_velocity,ocean_current_direction",
+            "start_hour": start_time.strftime("%Y-%m-%dT%H:%M"),
+            "end_hour": end_time.strftime("%Y-%m-%dT%H:%M"),
+            "cell_selection": "sea"
+        }
+        response = requests.get("https://marine-api.open-meteo.com/v1/marine", params=params, timeout=20).json()
         
         # Parse JSON into a simple dataframe structure that matches our needs
         hourly = response.get('hourly', {})
@@ -106,10 +113,10 @@ def calculate_next_position(current_lat, current_lon, target_time, df, hour_inde
     
     return current_lat + delta_lat, current_lon + delta_lon
 
-def resolve_simulation_window(hours, minutes, drowning_time):
+def resolve_simulation_window(days, hours, minutes, drowning_time):
     now_utc = datetime.datetime.now(datetime.timezone.utc)
 
-    if drowning_time is not None and (hours is not None or minutes is not None):
+    if drowning_time is not None and any(value is not None for value in (days, hours, minutes)):
         raise HTTPException(
             status_code=400,
             detail="Use either elapsed time or drowning_time, not both."
@@ -122,17 +129,21 @@ def resolve_simulation_window(hours, minutes, drowning_time):
             start_time = drowning_time.astimezone(datetime.timezone.utc)
         elapsed_hours = (now_utc - start_time).total_seconds() / 3600
     else:
-        if hours is None and minutes is None:
+        if days is None and hours is None and minutes is None:
             elapsed_hours = 5
         else:
-            elapsed_hours = (0 if hours is None else hours) + (0 if minutes is None else minutes / 60)
+            elapsed_hours = (
+                (0 if days is None else days * 24)
+                + (0 if hours is None else hours)
+                + (0 if minutes is None else minutes / 60)
+            )
         start_time = now_utc - datetime.timedelta(hours=elapsed_hours)
 
     if elapsed_hours <= 0:
         raise HTTPException(status_code=400, detail="The drowning time must be in the past.")
 
     if elapsed_hours > MAX_SIMULATION_HOURS:
-        raise HTTPException(status_code=400, detail=f"Simulation is limited to {MAX_SIMULATION_HOURS} hours.")
+        raise HTTPException(status_code=400, detail=f"Simulation is limited to {MAX_SIMULATION_DAYS} days.")
 
     return start_time, now_utc, elapsed_hours
 
@@ -142,11 +153,12 @@ def resolve_simulation_window(hours, minutes, drowning_time):
 def simulate_drift(
     lat: float = Query(..., description="Latitude of last seen position"),
     lon: float = Query(..., description="Longitude of last seen position"),
+    days: Optional[float] = Query(None, ge=0, le=MAX_SIMULATION_DAYS, description="Days since drowning"),
     hours: Optional[float] = Query(None, ge=0, le=MAX_SIMULATION_HOURS, description="Hours since drowning"),
     minutes: Optional[float] = Query(None, ge=0, le=MAX_SIMULATION_HOURS * 60, description="Minutes since drowning"),
     drowning_time: Optional[datetime.datetime] = Query(None, description="UTC drowning time as an ISO timestamp")
 ):
-    start_time, now_utc, elapsed_hours = resolve_simulation_window(hours, minutes, drowning_time)
+    start_time, now_utc, elapsed_hours = resolve_simulation_window(days, hours, minutes, drowning_time)
     end_time = now_utc + datetime.timedelta(hours=1)
     
     # Fetch Data

@@ -15,6 +15,12 @@ from share_store import router as share_router
 
 app = FastAPI(title="SafeCurrent - Search & Rescue API")
 app.include_router(share_router)
+LOCAL_CURRENT_SPEEDS = {
+    "weak": 0.2,
+    "medium": 0.5,
+    "strong": 0.8,
+}
+LOCAL_CURRENT_DURATIONS = {"first_hour", "all"}
 
 # CRITICAL FOR HACKATHON: Allows your Frontend (React/Vue/HTML) to talk to this Backend without CORS blocks
 app.add_middleware(
@@ -68,6 +74,18 @@ def calculate_next_position(current_lat, current_lon, target_time, df, step_hour
     if valid.empty:
         return current_lat, current_lon
 
+    if source.startswith("copernicus"):
+        hourly_df = hourly_df.dropna(subset=['latitude', 'longitude', 'uo', 'vo'])
+        if hourly_df.empty:
+            return current_lat, current_lon
+
+        distances = np.sqrt((hourly_df['latitude'] - current_lat)**2 + (hourly_df['longitude'] - current_lon)**2)
+        closest_row = hourly_df.loc[distances.idxmin()]
+    else:
+        hourly_df = hourly_df.dropna(subset=['uo', 'vo'])
+        if hourly_df.empty:
+            return current_lat, current_lon
+
     distances = np.sqrt(
         (valid['latitude'] - current_lat) ** 2
         + (valid['longitude'] - current_lon) ** 2
@@ -77,6 +95,15 @@ def calculate_next_position(current_lat, current_lon, target_time, df, step_hour
     uo = closest_row['uo']
     vo = closest_row['vo']
 
+    if pd.isna(uo) or pd.isna(vo):
+        return current_lat, current_lon
+
+    # Israeli Rip Current Logic (First hour push Westward)
+    rip_push = -0.75 if hour_index == 0 else 0.0
+    local_uo, local_vo = get_local_current_vector(local_current, hour_index)
+    total_uo = uo + rip_push + local_uo
+    total_vo = vo + local_vo
+
     meters_per_degree_lat = 111000
     meters_per_degree_lon = 111000 * np.cos(np.radians(current_lat))
 
@@ -85,6 +112,48 @@ def calculate_next_position(current_lat, current_lon, target_time, df, step_hour
     delta_lon = (uo * elapsed_seconds) / meters_per_degree_lon
 
     return current_lat + delta_lat, current_lon + delta_lon
+
+def parse_local_current(direction_deg, strength, duration):
+    if direction_deg is None and strength is None and duration is None:
+        return None
+
+    if direction_deg is None:
+        raise HTTPException(status_code=400, detail="Local current direction is required.")
+
+    try:
+        normalized_direction = float(direction_deg) % 360
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Local current direction must be a number.")
+
+    strength_key = (strength or "medium").lower()
+    duration_key = (duration or "first_hour").lower()
+
+    if strength_key not in LOCAL_CURRENT_SPEEDS:
+        raise HTTPException(status_code=400, detail="Local current strength must be weak, medium, or strong.")
+
+    if duration_key not in LOCAL_CURRENT_DURATIONS:
+        raise HTTPException(status_code=400, detail="Local current duration must be first_hour or all.")
+
+    speed_mps = LOCAL_CURRENT_SPEEDS[strength_key]
+    direction_radians = np.radians(normalized_direction)
+
+    return {
+        "direction_deg": normalized_direction,
+        "strength": strength_key,
+        "duration": duration_key,
+        "speed_mps": speed_mps,
+        "uo": float(speed_mps * np.sin(direction_radians)),
+        "vo": float(speed_mps * np.cos(direction_radians)),
+    }
+
+def get_local_current_vector(local_current, hour_index):
+    if not local_current:
+        return 0.0, 0.0
+
+    if local_current["duration"] == "first_hour" and hour_index > 0:
+        return 0.0, 0.0
+
+    return local_current["uo"], local_current["vo"]
 
 def parse_polygon_points(polygon):
     if polygon is None:
@@ -121,7 +190,7 @@ def parse_polygon_points(polygon):
 
     return points
 
-def run_trajectory(lat, lon, start_time, elapsed_hours, df):
+def run_trajectory(lat, lon, start_time, elapsed_hours, df, source, local_current=None):
     trajectory = [{"hour": 0, "lat": lat, "lon": lon}]
     current_lat = lat
     current_lon = lon
@@ -137,6 +206,10 @@ def run_trajectory(lat, lon, start_time, elapsed_hours, df):
             current_lon,
             current_time,
             df,
+            hour_index=hour_index,
+            source=source,
+            step_hours=step_hours,
+            local_current=local_current
             step_hours=step_hours
         )
         elapsed_so_far += step_hours
@@ -161,10 +234,21 @@ def simulate_drift(
     minutes: Optional[float] = Query(None),
     drowning_time: Optional[datetime.datetime] = Query(None),
     polygon: Optional[str] = Query(None),
+    floating: bool = Query(False, description="True = use surface (2D); False = use seabed currents (3D)"),
+    local_current_direction_deg: Optional[float] = Query(None),
+    local_current_strength: Optional[str] = Query(None),
+    local_current_duration: Optional[str] = Query(None),
 ):
     start_time, now_utc, elapsed_hours = resolve_simulation_window(days, hours, minutes, drowning_time)
     end_time = now_utc + datetime.timedelta(hours=2)
+    local_current = parse_local_current(
+        local_current_direction_deg,
+        local_current_strength,
+        local_current_duration
+    )
 
+    df, source = get_current_data(lat, lon, start_time, end_time, floating=floating)
+    trajectory = run_trajectory(lat, lon, start_time, elapsed_hours, df, source, local_current)
     df = get_current_data(lat, lon, start_time, end_time, floating=True)
     trajectory = run_trajectory(lat, lon, start_time, elapsed_hours, df)
 
@@ -174,7 +258,7 @@ def simulate_drift(
         for point_lat, point_lon in polygon_points:
             area_trajectories.append({
                 "origin": {"lat": point_lat, "lon": point_lon},
-                "trajectory": run_trajectory(point_lat, point_lon, start_time, elapsed_hours, df),
+                "trajectory": run_trajectory(point_lat, point_lon, start_time, elapsed_hours, df, source, local_current),
             })
 
     return {
@@ -182,4 +266,6 @@ def simulate_drift(
         "trajectory": trajectory,
         "area_trajectories": area_trajectories,
         "hours_simulated": round(elapsed_hours, 2),
+        "data_source_used": source,
+        "local_current_used": local_current,
     }

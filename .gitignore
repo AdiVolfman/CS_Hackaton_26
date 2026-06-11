@@ -11,6 +11,7 @@ ENV/
 .env
 .env.*
 !.env.example
+.shared_snapshots.json
 
 .pytest_cache/
 .mypy_cache/

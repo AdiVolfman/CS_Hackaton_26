@@ -138,12 +138,25 @@
         .date-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
         .time-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
         #time-input-group { gap: 10px; }
+        .uncertainty-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
         .uncertainty-toggle {
-            width: 100%;
+            width: 42px;
+            height: 42px;
+            flex: 0 0 42px;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             background: #2a2a2a;
             color: #ffffff;
             border: 1px solid #3d3d3d;
-            text-align: left;
+            font-size: 14px;
+            text-align: center;
         }
         .uncertainty-toggle:hover { background: #333333; }
         .uncertainty-toggle.active {
@@ -258,12 +271,16 @@
             </div>
         </div>
         <div class="input-group">
-            <label for="lat">Latitude</label>
-            <input type="number" id="lat" value="32.0800" min="-90" max="90" step="0.0001">
-        </div>
-        <div class="input-group">
-            <label for="lon">Longitude</label>
-            <input type="number" id="lon" value="34.7650" min="-180" max="180" step="0.0001">
+            <div class="time-row">
+                <div class="time-field">
+                    <label for="lat">Latitude</label>
+                    <input type="number" id="lat" value="32.0800" min="-90" max="90" step="0.0001">
+                </div>
+                <div class="time-field">
+                    <label for="lon">Longitude</label>
+                    <input type="number" id="lon" value="34.7650" min="-180" max="180" step="0.0001">
+                </div>
+            </div>
         </div>
         <div class="input-group">
             <div class="time-row">
@@ -325,16 +342,13 @@
             </div>
         </div>
         <div class="input-group">
-            <button id="time-uncertainty-toggle" class="uncertainty-toggle" onclick="toggleTimeUncertainty()" type="button" aria-pressed="false">Time not exact</button>
-            <div id="time-uncertainty-group" class="time-row hidden">
-                <div class="time-field">
-                    <label for="range-hours">Range Hours</label>
-                    <input type="number" id="range-hours" value="0" min="0" max="168" step="1">
-                </div>
-                <div class="time-field">
-                    <label for="range-minutes">Range Minutes</label>
-                    <input type="number" id="range-minutes" value="30" min="0" max="59" step="1">
-                </div>
+            <div class="uncertainty-header">
+                <label for="range-minutes">Time not exact</label>
+                <button id="time-uncertainty-toggle" class="uncertainty-toggle" onclick="toggleTimeUncertainty()" type="button" aria-label="Toggle time range" aria-pressed="false" title="Toggle time range">+/-</button>
+            </div>
+            <div id="time-uncertainty-group" class="time-field hidden">
+                <label for="range-minutes">Range Minutes</label>
+                <input type="number" id="range-minutes" value="30" min="1" max="10080" step="1">
             </div>
         </div>
         
@@ -577,7 +591,6 @@
             document.getElementById('pick-location-button').disabled = isLoading;
             document.getElementById('pick-polygon-button').disabled = isLoading;
             document.getElementById('time-uncertainty-toggle').disabled = isLoading;
-            document.getElementById('range-hours').disabled = isLoading;
             document.getElementById('range-minutes').disabled = isLoading;
         }
 
@@ -603,11 +616,10 @@
                 return 0;
             }
 
-            const rangeHours = Number(document.getElementById('range-hours').value);
             const rangeMinutes = Number(document.getElementById('range-minutes').value);
-            const uncertaintyHours = rangeHours + rangeMinutes / 60;
+            const uncertaintyHours = rangeMinutes / 60;
 
-            if (!Number.isFinite(rangeHours) || rangeHours < 0 || !Number.isFinite(rangeMinutes) || rangeMinutes < 0 || rangeMinutes > 59) {
+            if (!Number.isFinite(rangeMinutes) || rangeMinutes <= 0 || rangeMinutes > MAX_SIMULATION_HOURS * 60) {
                 throw new Error('Enter a valid time range.');
             }
 

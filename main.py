@@ -1,22 +1,20 @@
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 import datetime
 import json
 import pathlib
-import secrets
 import threading
 from typing import Optional
 import pandas as pd
 import numpy as np
 
 from fetch_current import CopernicusFetcher, KinneretFetcher, is_kinneret
+from simulation_window import resolve_simulation_window
+from share_store import router as share_router
 
 app = FastAPI(title="SafeCurrent - Search & Rescue API")
-MAX_SIMULATION_DAYS = 7
-MAX_SIMULATION_HOURS = MAX_SIMULATION_DAYS * 24
-SHARE_STORE_PATH = pathlib.Path(__file__).resolve().parent / ".shared_snapshots.json"
-share_store_lock = threading.Lock()
+app.include_router(share_router)
 LOCAL_CURRENT_SPEEDS = {
     "weak": 0.2,
     "medium": 0.5,
@@ -41,59 +39,6 @@ def serve_frontend():
         raise HTTPException(status_code=404, detail="index.html not found")
     return FileResponse(index_path)
 
-def load_share_store():
-    if not SHARE_STORE_PATH.exists():
-        return {}
-
-    try:
-        with SHARE_STORE_PATH.open("r", encoding="utf-8") as store_file:
-            data = json.load(store_file)
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-    return data if isinstance(data, dict) else {}
-
-def save_share_store(store):
-    with SHARE_STORE_PATH.open("w", encoding="utf-8") as store_file:
-        json.dump(store, store_file, separators=(",", ":"))
-
-@app.post("/share")
-def create_share_snapshot(snapshot: dict = Body(...)):
-    if not isinstance(snapshot, dict):
-        raise HTTPException(status_code=400, detail="Share snapshot must be an object.")
-
-    snapshot_id = secrets.token_urlsafe(8)
-    created_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-    with share_store_lock:
-        store = load_share_store()
-        store[snapshot_id] = {
-            "created_at": created_at,
-            "snapshot": snapshot,
-        }
-
-        if len(store) > 200:
-            oldest_ids = sorted(
-                store,
-                key=lambda key: store[key].get("created_at", "")
-            )[:-200]
-            for old_id in oldest_ids:
-                store.pop(old_id, None)
-
-        save_share_store(store)
-
-    return {"share_id": snapshot_id}
-
-@app.get("/share/{snapshot_id}")
-def get_share_snapshot(snapshot_id: str):
-    with share_store_lock:
-        store = load_share_store()
-
-    record = store.get(snapshot_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="Shared result not found.")
-
-    return record.get("snapshot", {})
 
 @app.on_event("startup")
 def print_frontend_url():
@@ -108,11 +53,13 @@ def print_frontend_url():
 
 def get_current_data(lat, lon, start_time, end_time, floating):
     if is_kinneret(lat, lon):
-        return KinneretFetcher().fetch(lat, lon, start_time, end_time, floating=floating)
-    return CopernicusFetcher().fetch(lat, lon, start_time, end_time, floating=floating)
+        df = KinneretFetcher().fetch(lat, lon, start_time, end_time, floating=floating)
+        return df, "kinneret-wind-2d" if floating else "kinneret-wind-3d"
+    df = CopernicusFetcher().fetch(lat, lon, start_time, end_time, floating=floating)
+    return df, "copernicus-2d" if floating else "copernicus-3d"
 
 
-def calculate_next_position(current_lat, current_lon, target_time, df, step_hours=1.0):
+def calculate_next_position(current_lat, current_lon, target_time, df, hour_index, source, local_current=None, step_hours=1.0):
     df['time'] = pd.to_datetime(df['time']).dt.tz_localize(None)
     target_time = pd.to_datetime(target_time).tz_localize(None)
 
@@ -128,18 +75,6 @@ def calculate_next_position(current_lat, current_lon, target_time, df, step_hour
     valid = hourly_df.dropna(subset=["uo", "vo"])
     if valid.empty:
         return current_lat, current_lon
-    
-    if source.startswith("copernicus"):
-        hourly_df = hourly_df.dropna(subset=['latitude', 'longitude', 'uo', 'vo'])
-        if hourly_df.empty:
-            return current_lat, current_lon
-
-        distances = np.sqrt((hourly_df['latitude'] - current_lat)**2 + (hourly_df['longitude'] - current_lon)**2)
-        closest_row = hourly_df.loc[distances.idxmin()]
-    else:
-        hourly_df = hourly_df.dropna(subset=['uo', 'vo'])
-        if hourly_df.empty:
-            return current_lat, current_lon
 
     distances = np.sqrt(
         (valid['latitude'] - current_lat) ** 2
@@ -152,9 +87,9 @@ def calculate_next_position(current_lat, current_lon, target_time, df, step_hour
 
     if pd.isna(uo) or pd.isna(vo):
         return current_lat, current_lon
-    
-    # Israeli Rip Current Logic (First hour push Westward)
-    rip_push = -0.75 if hour_index == 0 else 0.0
+
+    # Israeli rip current — sea only, first hour only
+    rip_push = -0.75 if hour_index == 0 and source.startswith("copernicus") else 0.0
     local_uo, local_vo = get_local_current_vector(local_current, hour_index)
     total_uo = uo + rip_push + local_uo
     total_vo = vo + local_vo
@@ -163,8 +98,8 @@ def calculate_next_position(current_lat, current_lon, target_time, df, step_hour
     meters_per_degree_lon = 111000 * np.cos(np.radians(current_lat))
 
     elapsed_seconds = step_hours * 3600
-    delta_lat = (vo * elapsed_seconds) / meters_per_degree_lat
-    delta_lon = (uo * elapsed_seconds) / meters_per_degree_lon
+    delta_lat = (total_vo * elapsed_seconds) / meters_per_degree_lat
+    delta_lon = (total_uo * elapsed_seconds) / meters_per_degree_lon
 
     return current_lat + delta_lat, current_lon + delta_lon
 
@@ -210,40 +145,6 @@ def get_local_current_vector(local_current, hour_index):
 
     return local_current["uo"], local_current["vo"]
 
-def resolve_simulation_window(days, hours, minutes, drowning_time):
-    now_utc = datetime.datetime.now(datetime.timezone.utc)
-
-    if drowning_time is not None and any(value is not None for value in (days, hours, minutes)):
-        raise HTTPException(
-            status_code=400,
-            detail="Use either elapsed time or drowning_time, not both."
-        )
-
-    if drowning_time is not None:
-        if drowning_time.tzinfo is None:
-            start_time = drowning_time.replace(tzinfo=datetime.timezone.utc)
-        else:
-            start_time = drowning_time.astimezone(datetime.timezone.utc)
-        elapsed_hours = (now_utc - start_time).total_seconds() / 3600
-    else:
-        if days is None and hours is None and minutes is None:
-            elapsed_hours = 5
-        else:
-            elapsed_hours = (
-                (0 if days is None else days * 24)
-                + (0 if hours is None else hours)
-                + (0 if minutes is None else minutes / 60)
-            )
-        start_time = now_utc - datetime.timedelta(hours=elapsed_hours)
-
-    if elapsed_hours <= 0:
-        raise HTTPException(status_code=400, detail="The drowning time must be in the past.")
-
-    if elapsed_hours > MAX_SIMULATION_HOURS:
-        raise HTTPException(status_code=400, detail=f"Simulation is limited to {MAX_SIMULATION_DAYS} days.")
-
-    return start_time, now_utc, elapsed_hours
-
 def parse_polygon_points(polygon):
     if polygon is None:
         return None
@@ -286,6 +187,7 @@ def run_trajectory(lat, lon, start_time, elapsed_hours, df, source, local_curren
     current_time = pd.to_datetime(start_time)
     remaining_hours = elapsed_hours
     elapsed_so_far = 0.0
+    hour_index = 0
 
     while remaining_hours > 1e-9:
         step_hours = min(1.0, remaining_hours)
@@ -297,9 +199,8 @@ def run_trajectory(lat, lon, start_time, elapsed_hours, df, source, local_curren
             df,
             hour_index=hour_index,
             source=source,
+            local_current=local_current,
             step_hours=step_hours,
-            local_current=local_current
-            step_hours=step_hours
         )
         elapsed_so_far += step_hours
 
@@ -310,6 +211,7 @@ def run_trajectory(lat, lon, start_time, elapsed_hours, df, source, local_curren
         })
         current_lat, current_lon = next_lat, next_lon
         remaining_hours = max(0.0, remaining_hours - step_hours)
+        hour_index += 1
 
     return trajectory
 
@@ -338,8 +240,6 @@ def simulate_drift(
 
     df, source = get_current_data(lat, lon, start_time, end_time, floating=floating)
     trajectory = run_trajectory(lat, lon, start_time, elapsed_hours, df, source, local_current)
-    df = get_current_data(lat, lon, start_time, end_time, floating=True)
-    trajectory = run_trajectory(lat, lon, start_time, elapsed_hours, df)
 
     area_trajectories = []
     polygon_points = parse_polygon_points(polygon)

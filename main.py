@@ -3,9 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import datetime
 import pandas as pd
 import numpy as np
-import requests
 
-from fetch_current import CopernicusFetcher
+from fetch_current import CopernicusFetcher, OpenMeteoFetcher
 
 app = FastAPI(title="SafeCurrent - Search & Rescue API")
 
@@ -20,7 +19,7 @@ app.add_middleware(
 
 # --- CORE SIMULATION LOGIC ---
 
-def get_current_data_fallback(lat, lon, start_time, end_time):
+def get_current_data(lat, lon, start_time, end_time):
     """
     Tries to fetch from Copernicus. If it fails, instantly switches to Open-Meteo API
     to ensure the hackathon app never crashes.
@@ -31,28 +30,8 @@ def get_current_data_fallback(lat, lon, start_time, end_time):
         return df, "copernicus"
     except Exception as e:
         print(f"Copernicus failed ({e}). Switching to Open-Meteo Marine API Backup...")
-        
-        # Open-Meteo fallback url
-        url = f"https://marine-api.open-meteo.com/v1/marine?latitude={lat}&longitude={lon}&hourly=ocean_current_velocity,ocean_current_direction"
-        response = requests.get(url).json()
-        
-        # Parse JSON into a simple dataframe structure that matches our needs
-        hourly = response.get('hourly', {})
-        times = hourly.get('time', [])
-        velocities = hourly.get('ocean_current_velocity', []) # given in km/h
-        directions = hourly.get('ocean_current_direction', []) # given in degrees
-        
-        rows = []
-        for t, v, d in zip(times, velocities, directions):
-            # Convert km/h to m/s
-            speed_ms = (v * 1000) / 3600
-            rad = np.radians(d)
-            # Break speed into uo (East) and vo (North) vectors
-            uo = speed_ms * np.sin(rad)
-            vo = speed_ms * np.cos(rad)
-            rows.append({"time": pd.to_datetime(t), "latitude": lat, "longitude": lon, "uo": uo, "vo": vo})
-            
-        return pd.DataFrame(rows), "open-meteo"
+        df = OpenMeteoFetcher().fetch(lat, lon, start_time, end_time)
+        return df, "open-meteo"
 
 def calculate_next_position(current_lat, current_lon, target_time, df, hour_index, source):
     df['time'] = pd.to_datetime(df['time']).dt.tz_localize(None)
@@ -106,7 +85,7 @@ def simulate_drift(
     end_time = start_time + datetime.timedelta(hours=hours + 2)
     
     # Fetch Data
-    df, source = get_current_data_fallback(lat, lon, start_time, end_time)
+    df, source = get_current_data(lat, lon, start_time, end_time)
     
     # Run Simulation
     trajectory = [{"hour": 0, "lat": lat, "lon": lon}]

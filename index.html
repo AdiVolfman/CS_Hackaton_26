@@ -132,12 +132,25 @@
             white-space: nowrap;
             border: 0;
         }
-        .hidden { display: none; }
+        .hidden { display: none !important; }
         .time-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
         .elapsed-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
         .date-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
         .time-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
         #time-input-group { gap: 10px; }
+        .uncertainty-toggle {
+            width: 100%;
+            background: #2a2a2a;
+            color: #ffffff;
+            border: 1px solid #3d3d3d;
+            text-align: left;
+        }
+        .uncertainty-toggle:hover { background: #333333; }
+        .uncertainty-toggle.active {
+            color: #121212;
+            background: #ffbf47;
+            border-color: #ffbf47;
+        }
         .beach-label {
             color: #ffffff;
             font-size: 12px;
@@ -150,19 +163,6 @@
             border: 1px solid rgba(0, 255, 204, 0.45);
             text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
             box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
-            transform: translate(-50%, -50%);
-        }
-        .grid-label {
-            color: #dffdf8;
-            font-size: 11px;
-            font-weight: 700;
-            line-height: 1;
-            white-space: nowrap;
-            padding: 2px 5px;
-            border-radius: 4px;
-            background: rgba(0, 0, 0, 0.52);
-            border: 1px solid rgba(0, 255, 204, 0.35);
-            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
             transform: translate(-50%, -50%);
         }
         .grid-size-control {
@@ -324,6 +324,19 @@
                 <input type="time" id="drowning-time" step="60">
             </div>
         </div>
+        <div class="input-group">
+            <button id="time-uncertainty-toggle" class="uncertainty-toggle" onclick="toggleTimeUncertainty()" type="button" aria-pressed="false">Time not exact</button>
+            <div id="time-uncertainty-group" class="time-row hidden">
+                <div class="time-field">
+                    <label for="range-hours">Range Hours</label>
+                    <input type="number" id="range-hours" value="0" min="0" max="168" step="1">
+                </div>
+                <div class="time-field">
+                    <label for="range-minutes">Range Minutes</label>
+                    <input type="number" id="range-minutes" value="30" min="0" max="59" step="1">
+                </div>
+            </div>
+        </div>
         
         <button id="simulate-button" onclick="triggerSimulation()">Recalculate Current Points</button>
         <div id="loading-indicator" class="loading-indicator hidden" role="status" aria-live="polite">
@@ -456,26 +469,6 @@
             return 1;
         }
 
-        function formatGridCoordinate(value, axis, decimals) {
-            const direction = axis === 'lat'
-                ? (value >= 0 ? 'N' : 'S')
-                : (value >= 0 ? 'E' : 'W');
-
-            return `${Math.abs(value).toFixed(decimals)} deg ${direction}`;
-        }
-
-        function addGridLabel(position, text) {
-            L.marker(position, {
-                pane: 'grid',
-                icon: L.divIcon({
-                    className: '',
-                    html: `<div class="grid-label">${text}</div>`,
-                    iconSize: [0, 0]
-                }),
-                interactive: false
-            }).addTo(gridLayer);
-        }
-
         function updateGridLayer() {
             if (!map.hasLayer(gridLayer)) return;
 
@@ -486,10 +479,7 @@
             const north = bounds.getNorth();
             const west = bounds.getWest();
             const east = bounds.getEast();
-            const latLabelLon = west + (east - west) * 0.04;
-            const lonLabelLat = south + (north - south) * 0.06;
             const step = getGridStep(map.getZoom());
-            const decimals = getGridDecimals(step);
             const firstLat = Math.ceil(south / step) * step;
             const firstLon = Math.ceil(west / step) * step;
             const lineStyle = {
@@ -503,13 +493,11 @@
             for (let lat = firstLat; lat <= north + step / 2; lat += step) {
                 const normalizedLat = Number(lat.toFixed(6));
                 L.polyline([[normalizedLat, west], [normalizedLat, east]], lineStyle).addTo(gridLayer);
-                addGridLabel([normalizedLat, latLabelLon], formatGridCoordinate(normalizedLat, 'lat', decimals));
             }
 
             for (let lon = firstLon; lon <= east + step / 2; lon += step) {
                 const normalizedLon = Number(lon.toFixed(6));
                 L.polyline([[south, normalizedLon], [north, normalizedLon]], lineStyle).addTo(gridLayer);
-                addGridLabel([lonLabelLat, normalizedLon], formatGridCoordinate(normalizedLon, 'lon', decimals));
             }
 
             updateGridSizeControl();
@@ -542,6 +530,7 @@
         let heatLayer = null;
         let areaPathLayer = null;
         let finalAreaPolygon = null;
+        let timeRangeLayer = null;
         let isPickingLocation = false;
         let isDrawingPolygon = false;
         let selectedPolygon = null;
@@ -587,6 +576,46 @@
             document.getElementById('simulate-button').disabled = isLoading;
             document.getElementById('pick-location-button').disabled = isLoading;
             document.getElementById('pick-polygon-button').disabled = isLoading;
+            document.getElementById('time-uncertainty-toggle').disabled = isLoading;
+            document.getElementById('range-hours').disabled = isLoading;
+            document.getElementById('range-minutes').disabled = isLoading;
+        }
+
+        function isTimeUncertaintyEnabled() {
+            return document.getElementById('time-uncertainty-toggle').getAttribute('aria-pressed') === 'true';
+        }
+
+        function setTimeUncertaintyEnabled(isEnabled) {
+            const toggle = document.getElementById('time-uncertainty-toggle');
+            const group = document.getElementById('time-uncertainty-group');
+
+            toggle.classList.toggle('active', isEnabled);
+            toggle.setAttribute('aria-pressed', String(isEnabled));
+            group.classList.toggle('hidden', !isEnabled);
+        }
+
+        function toggleTimeUncertainty() {
+            setTimeUncertaintyEnabled(!isTimeUncertaintyEnabled());
+        }
+
+        function getTimeUncertaintyHours() {
+            if (!isTimeUncertaintyEnabled()) {
+                return 0;
+            }
+
+            const rangeHours = Number(document.getElementById('range-hours').value);
+            const rangeMinutes = Number(document.getElementById('range-minutes').value);
+            const uncertaintyHours = rangeHours + rangeMinutes / 60;
+
+            if (!Number.isFinite(rangeHours) || rangeHours < 0 || !Number.isFinite(rangeMinutes) || rangeMinutes < 0 || rangeMinutes > 59) {
+                throw new Error('Enter a valid time range.');
+            }
+
+            if (!Number.isFinite(uncertaintyHours) || uncertaintyHours <= 0) {
+                throw new Error('Enter a positive time range.');
+            }
+
+            return uncertaintyHours;
         }
 
         function getSelectedPosition() {
@@ -627,6 +656,13 @@
             }
         }
 
+        function clearTimeRangeLayer() {
+            if (timeRangeLayer) {
+                map.removeLayer(timeRangeLayer);
+                timeRangeLayer = null;
+            }
+        }
+
         function clearDriftResultLayers() {
             if (pathLine) {
                 map.removeLayer(pathLine);
@@ -639,6 +675,7 @@
             }
 
             clearAreaResultLayers();
+            clearTimeRangeLayer();
         }
 
         function formatArea(areaSqMeters) {
@@ -1327,15 +1364,42 @@
             return drowningDate;
         }
 
-        function buildSimulationParams(lat, lon) {
-            const mode = document.getElementById('drowning-mode').value;
+        function createSimulationParams(lat, lon, polygonPayload) {
             const params = new URLSearchParams({lat, lon});
-            const polygonPayload = getSelectedPolygonPayload();
-            let elapsedHours = 0;
 
             if (polygonPayload) {
                 params.set('polygon', JSON.stringify(polygonPayload));
             }
+
+            return params;
+        }
+
+        function createElapsedSimulationParams(lat, lon, elapsedHours, polygonPayload) {
+            const params = createSimulationParams(lat, lon, polygonPayload);
+            params.set('hours', Number(elapsedHours.toFixed(4)));
+            return params;
+        }
+
+        function formatDurationHours(durationHours) {
+            const wholeHours = Math.floor(durationHours);
+            const minutes = Math.round((durationHours - wholeHours) * 60);
+
+            if (wholeHours === 0) {
+                return `${minutes} min`;
+            }
+
+            if (minutes === 0) {
+                return `${wholeHours} hr`;
+            }
+
+            return `${wholeHours} hr ${minutes} min`;
+        }
+
+        function buildSimulationParams(lat, lon) {
+            const mode = document.getElementById('drowning-mode').value;
+            const polygonPayload = getSelectedPolygonPayload();
+            const params = createSimulationParams(lat, lon, polygonPayload);
+            let elapsedHours = 0;
 
             if (mode === 'elapsed') {
                 const days = Number(document.getElementById('days').value);
@@ -1360,7 +1424,115 @@
                 throw new Error(`Use a value up to ${MAX_SIMULATION_DAYS} days.`);
             }
 
-            return {params, elapsedHours};
+            const uncertaintyHours = getTimeUncertaintyHours();
+            let rangeRequests = [];
+
+            if (uncertaintyHours > 0) {
+                const latestElapsedHours = elapsedHours - uncertaintyHours;
+                const earliestElapsedHours = elapsedHours + uncertaintyHours;
+
+                if (latestElapsedHours <= 0) {
+                    throw new Error('The time range is too large. The latest possible time must still be in the past.');
+                }
+
+                if (earliestElapsedHours > MAX_SIMULATION_HOURS) {
+                    throw new Error(`The time range is too large. Use a range within ${MAX_SIMULATION_DAYS} days.`);
+                }
+
+                rangeRequests = [
+                    {
+                        label: 'Latest possible time',
+                        params: createElapsedSimulationParams(lat, lon, latestElapsedHours, polygonPayload),
+                        elapsedHours: latestElapsedHours,
+                        color: '#58a6ff'
+                    },
+                    {
+                        label: 'Earliest possible time',
+                        params: createElapsedSimulationParams(lat, lon, earliestElapsedHours, polygonPayload),
+                        elapsedHours: earliestElapsedHours,
+                        color: '#ff5db8'
+                    }
+                ];
+            }
+
+            return {params, elapsedHours, uncertaintyHours, rangeRequests};
+        }
+
+        async function requestSimulation(params) {
+            const response = await fetch(`${API_BASE_URL}/simulate?${params.toString()}`);
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.detail || 'Simulation failed.');
+            }
+
+            return result;
+        }
+
+        function drawTimeRangeResults(rangeResults, heatPoints) {
+            const rangeBoundsPoints = [];
+
+            if (rangeResults.length === 0) {
+                return rangeBoundsPoints;
+            }
+
+            timeRangeLayer = L.layerGroup().addTo(map);
+
+            rangeResults.forEach(({request, result}) => {
+                if (!result || result.status !== 'success' || result.trajectory.length <= 1) return;
+
+                const trajectory = result.trajectory;
+                const latLngs = trajectory.map(point => [point.lat, point.lon]);
+                const finalPoint = latLngs[latLngs.length - 1];
+
+                L.polyline(latLngs, {
+                    color: request.color,
+                    weight: 3,
+                    opacity: 0.82,
+                    dashArray: '10, 8'
+                }).addTo(timeRangeLayer).bindPopup(`<b>${request.label}</b><br>${result.hours_simulated} hours simulated.`);
+
+                rangeBoundsPoints.push(finalPoint);
+                heatPoints.push([finalPoint[0], finalPoint[1], 0.85]);
+
+                if (Array.isArray(result.area_trajectories) && result.area_trajectories.length > 0) {
+                    const finalAreaPoints = [];
+
+                    result.area_trajectories.forEach(area => {
+                        const areaLatLngs = area.trajectory.map(point => [point.lat, point.lon]);
+
+                        if (areaLatLngs.length > 1) {
+                            L.polyline(areaLatLngs, {
+                                color: request.color,
+                                weight: 2,
+                                opacity: 0.55,
+                                dashArray: '3, 7'
+                            }).addTo(timeRangeLayer);
+                        }
+
+                        if (areaLatLngs.length > 0) {
+                            finalAreaPoints.push(areaLatLngs[areaLatLngs.length - 1]);
+                        }
+                    });
+
+                    if (finalAreaPoints.length >= 3) {
+                        L.polygon(finalAreaPoints, {
+                            color: request.color,
+                            weight: 2,
+                            opacity: 0.8,
+                            fillColor: request.color,
+                            fillOpacity: 0.12
+                        }).addTo(timeRangeLayer).bindPopup(`<b>${request.label}</b><br>Time range area.`);
+                    }
+
+                    finalAreaPoints.forEach(point => {
+                        rangeBoundsPoints.push(point);
+                        heatPoints.push([point[0], point[1], 0.72]);
+                    });
+                }
+            });
+
+            return rangeBoundsPoints;
         }
 
         // Pick mode lets regular map clicks pan/inspect without changing the selected location.
@@ -1406,28 +1578,23 @@
                     setPickLocationMode(false);
                 }
 
-                // Clear previous paths and heatmaps, keep the startMarker we just dropped
-                if (pathLine) {
-                    map.removeLayer(pathLine);
-                    pathLine = null;
-                }
-
-                if (heatLayer) {
-                    map.removeLayer(heatLayer);
-                    heatLayer = null;
-                }
-
-                clearAreaResultLayers();
+                clearDriftResultLayers();
 
                 setLastSeenMarker(lat, lon);
                 setLoading(true);
                 setStatus('Calculating drift...');
 
-                const response = await fetch(`${API_BASE_URL}/simulate?${simulationInput.params.toString()}`);
-                const result = await response.json();
+                const result = await requestSimulation(simulationInput.params);
+                let rangeResults = [];
 
-                if (!response.ok) {
-                    throw new Error(result.detail || 'Simulation failed.');
+                if (simulationInput.rangeRequests.length > 0) {
+                    setStatus('Calculating drift time range...');
+                    rangeResults = await Promise.all(
+                        simulationInput.rangeRequests.map(async request => ({
+                            request,
+                            result: await requestSimulation(request.params)
+                        }))
+                    );
                 }
 
                 if (result.status === "success" && result.trajectory.length > 1) {
@@ -1485,6 +1652,7 @@
                         }
                     });
                     finalAreaPoints.forEach(point => heatPoints.push([point[0], point[1], 0.8]));
+                    const rangeBoundsPoints = drawTimeRangeResults(rangeResults, heatPoints);
 
                     heatLayer = L.heatLayer(heatPoints, {
                         radius: 28, 
@@ -1494,12 +1662,17 @@
                     }).addTo(map);
 
                     // Smoothly slide map view to the target search zone
-                    if (finalAreaPoints.length >= 3) {
-                        map.fitBounds(L.latLngBounds(latLngs.concat(finalAreaPoints)).pad(0.18));
-                        setStatus(`Calculated ${result.hours_simulated} hours from ${result.data_source_used} for selected area.`);
+                    const allBoundsPoints = latLngs.concat(finalAreaPoints, rangeBoundsPoints);
+                    const uncertaintyText = simulationInput.uncertaintyHours > 0
+                        ? ` +/- ${formatDurationHours(simulationInput.uncertaintyHours)}`
+                        : '';
+
+                    if (finalAreaPoints.length >= 3 || rangeBoundsPoints.length > 0) {
+                        map.fitBounds(L.latLngBounds(allBoundsPoints).pad(0.18));
+                        setStatus(`Calculated ${result.hours_simulated} hours${uncertaintyText} from ${result.data_source_used}.`);
                     } else {
                         map.panTo([trajectory[trajectory.length - 1].lat, trajectory[trajectory.length - 1].lon]);
-                        setStatus(`Calculated ${result.hours_simulated} hours from ${result.data_source_used}.`);
+                        setStatus(`Calculated ${result.hours_simulated} hours${uncertaintyText} from ${result.data_source_used}.`);
                     }
                 }
             } catch (error) {

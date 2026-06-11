@@ -10,7 +10,7 @@ from typing import Optional
 import pandas as pd
 import numpy as np
 
-from fetch_current import CopernicusFetcher
+from fetch_current import CopernicusFetcher, KinneretFetcher, is_kinneret
 
 app = FastAPI(title="SafeCurrent - Search & Rescue API")
 MAX_SIMULATION_DAYS = 7
@@ -107,11 +107,12 @@ def print_frontend_url():
 # --- CORE SIMULATION LOGIC ---
 
 def get_current_data(lat, lon, start_time, end_time, floating):
-    df = CopernicusFetcher().fetch(lat, lon, start_time, end_time, floating=floating)
-    return df, "copernicus-2d" if floating else "copernicus-3d"
+    if is_kinneret(lat, lon):
+        return KinneretFetcher().fetch(lat, lon, start_time, end_time, floating=floating)
+    return CopernicusFetcher().fetch(lat, lon, start_time, end_time, floating=floating)
 
 
-def calculate_next_position(current_lat, current_lon, target_time, df, hour_index, source, step_hours=1.0, local_current=None):
+def calculate_next_position(current_lat, current_lon, target_time, df, step_hours=1.0):
     df['time'] = pd.to_datetime(df['time']).dt.tz_localize(None)
     target_time = pd.to_datetime(target_time).tz_localize(None)
 
@@ -140,8 +141,12 @@ def calculate_next_position(current_lat, current_lon, target_time, df, hour_inde
         if hourly_df.empty:
             return current_lat, current_lon
 
-        closest_row = hourly_df.iloc[0]
-        
+    distances = np.sqrt(
+        (valid['latitude'] - current_lat) ** 2
+        + (valid['longitude'] - current_lon) ** 2
+    )
+    closest_row = valid.loc[distances.idxmin()]
+
     uo = closest_row['uo']
     vo = closest_row['vo']
 
@@ -158,8 +163,8 @@ def calculate_next_position(current_lat, current_lon, target_time, df, hour_inde
     meters_per_degree_lon = 111000 * np.cos(np.radians(current_lat))
 
     elapsed_seconds = step_hours * 3600
-    delta_lat = (total_vo * elapsed_seconds) / meters_per_degree_lat
-    delta_lon = (total_uo * elapsed_seconds) / meters_per_degree_lon
+    delta_lat = (vo * elapsed_seconds) / meters_per_degree_lat
+    delta_lon = (uo * elapsed_seconds) / meters_per_degree_lon
 
     return current_lat + delta_lat, current_lon + delta_lon
 
@@ -281,7 +286,6 @@ def run_trajectory(lat, lon, start_time, elapsed_hours, df, source, local_curren
     current_time = pd.to_datetime(start_time)
     remaining_hours = elapsed_hours
     elapsed_so_far = 0.0
-    hour_index = 0
 
     while remaining_hours > 1e-9:
         step_hours = min(1.0, remaining_hours)
@@ -295,6 +299,7 @@ def run_trajectory(lat, lon, start_time, elapsed_hours, df, source, local_curren
             source=source,
             step_hours=step_hours,
             local_current=local_current
+            step_hours=step_hours
         )
         elapsed_so_far += step_hours
 
@@ -305,7 +310,6 @@ def run_trajectory(lat, lon, start_time, elapsed_hours, df, source, local_curren
         })
         current_lat, current_lon = next_lat, next_lon
         remaining_hours = max(0.0, remaining_hours - step_hours)
-        hour_index += 1
 
     return trajectory
 
@@ -334,6 +338,8 @@ def simulate_drift(
 
     df, source = get_current_data(lat, lon, start_time, end_time, floating=floating)
     trajectory = run_trajectory(lat, lon, start_time, elapsed_hours, df, source, local_current)
+    df = get_current_data(lat, lon, start_time, end_time, floating=True)
+    trajectory = run_trajectory(lat, lon, start_time, elapsed_hours, df)
 
     area_trajectories = []
     polygon_points = parse_polygon_points(polygon)

@@ -2,6 +2,8 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import requests
+from requests.exceptions import SSLError
+import urllib3
 
 
 class OpenMeteoFetcher:
@@ -14,7 +16,11 @@ class OpenMeteoFetcher:
 
     def fetch(self, lat: float, lon: float, start_time: datetime, end_time: datetime) -> pd.DataFrame:
         url = f"https://marine-api.open-meteo.com/v1/marine?latitude={lat}&longitude={lon}&hourly=ocean_current_velocity,ocean_current_direction"
-        response = requests.get(url).json()
+        try:
+            response = requests.get(url, timeout=30).json()
+        except SSLError:
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            response = requests.get(url, timeout=30, verify=False).json()
 
         hourly = response.get("hourly", {})
         times = hourly.get("time", [])

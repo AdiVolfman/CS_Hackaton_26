@@ -1,18 +1,23 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 import datetime
 import json
 import pathlib
+import random
 import threading
-from typing import Optional
+from typing import Literal, Optional
 import pandas as pd
 import numpy as np
+from opendrift.models.leeway import Leeway
+from opendrift.readers import reader_constant
 
 from fetch_current import CopernicusFetcher, OpenMeteoFetcher
 
 app = FastAPI(title="SafeCurrent - Search & Rescue API")
 MAX_SIMULATION_DAYS = 7
 MAX_SIMULATION_HOURS = MAX_SIMULATION_DAYS * 24
+MAX_MONTE_CARLO_SAMPLES = 2000
 
 # CRITICAL FOR HACKATHON: Allows your Frontend (React/Vue/HTML) to talk to this Backend without CORS blocks
 app.add_middleware(
@@ -34,6 +39,26 @@ def print_frontend_url():
 
 # --- CORE SIMULATION LOGIC ---
 
+class LatLonPoint(BaseModel):
+    lat: float
+    lon: float
+
+
+class PersonProfile(BaseModel):
+    age: Optional[int] = None
+    weight_kg: Optional[float] = None
+    swimming_ability: Literal["unknown", "non_swimmer", "average", "strong"] = "unknown"
+
+
+class AreaSimulationRequest(BaseModel):
+    polygon: list[LatLonPoint] = Field(..., min_length=3)
+    earliest_time: datetime.datetime
+    latest_time: datetime.datetime
+    samples: int = Field(1000, ge=1, le=MAX_MONTE_CARLO_SAMPLES)
+    person: PersonProfile = Field(default_factory=PersonProfile)
+    object_type: int = 27
+    current_source: Literal["copernicus", "open-meteo", "auto"] = "copernicus"
+
 def get_current_data(lat, lon, start_time, end_time):
     """
     Tries to fetch from Copernicus. If it fails, instantly switches to Open-Meteo API
@@ -47,6 +72,16 @@ def get_current_data(lat, lon, start_time, end_time):
         print(f"Copernicus failed ({e}). Switching to Open-Meteo Marine API Backup...")
         df = OpenMeteoFetcher().fetch(lat, lon, start_time, end_time)
         return df, "open-meteo"
+
+
+def get_current_data_for_area(lat, lon, start_time, end_time, current_source):
+    if current_source == "open-meteo":
+        return OpenMeteoFetcher().fetch(lat, lon, start_time, end_time), "open-meteo"
+
+    if current_source == "copernicus":
+        return CopernicusFetcher().fetch(lat, lon, start_time, end_time), "copernicus"
+
+    return get_current_data(lat, lon, start_time, end_time)
 
 
 def calculate_next_position(current_lat, current_lon, target_time, df, hour_index, source, step_hours=1.0):
@@ -159,6 +194,211 @@ def parse_polygon_points(polygon):
 
     return points
 
+
+def validate_polygon_points(points):
+    if len(points) < 3:
+        raise HTTPException(status_code=400, detail="Polygon must contain at least 3 points.")
+
+    for point_lat, point_lon in points:
+        if not (-90 <= point_lat <= 90 and -180 <= point_lon <= 180):
+            raise HTTPException(status_code=400, detail="Polygon coordinates are outside valid lat/lon ranges.")
+
+
+def point_in_polygon(lat, lon, polygon_points):
+    inside = False
+    j = len(polygon_points) - 1
+
+    for i, (lat_i, lon_i) in enumerate(polygon_points):
+        lat_j, lon_j = polygon_points[j]
+        intersects = ((lon_i > lon) != (lon_j > lon)) and (
+            lat < (lat_j - lat_i) * (lon - lon_i) / ((lon_j - lon_i) or 1e-12) + lat_i
+        )
+        if intersects:
+            inside = not inside
+        j = i
+
+    return inside
+
+
+def sample_point_in_polygon(polygon_points):
+    min_lat = min(point[0] for point in polygon_points)
+    max_lat = max(point[0] for point in polygon_points)
+    min_lon = min(point[1] for point in polygon_points)
+    max_lon = max(point[1] for point in polygon_points)
+
+    for _ in range(10000):
+        lat = random.uniform(min_lat, max_lat)
+        lon = random.uniform(min_lon, max_lon)
+        if point_in_polygon(lat, lon, polygon_points):
+            return lat, lon
+
+    raise HTTPException(status_code=400, detail="Could not sample points inside polygon.")
+
+
+def normalize_utc(value):
+    if value.tzinfo is None:
+        return value.replace(tzinfo=datetime.timezone.utc)
+    return value.astimezone(datetime.timezone.utc)
+
+
+def sample_consciousness_delay_minutes(person):
+    ability_ranges = {
+        "non_swimmer": (0.5, 3.0),
+        "average": (1.0, 10.0),
+        "strong": (5.0, 30.0),
+        "unknown": (0.5, 15.0),
+    }
+    low, high = ability_ranges[person.swimming_ability]
+
+    if person.age is not None and (person.age < 12 or person.age > 70):
+        high *= 0.75
+
+    if person.weight_kg is not None and person.weight_kg < 45:
+        high *= 0.85
+
+    mode = low + (high - low) * 0.35
+    return random.triangular(low, high, mode)
+
+
+def current_reader_from_dataframe(df):
+    if df.empty or "uo" not in df.columns or "vo" not in df.columns:
+        raise HTTPException(status_code=502, detail="Current data is empty or missing uo/vo columns.")
+
+    uo = float(pd.to_numeric(df["uo"], errors="coerce").dropna().mean())
+    vo = float(pd.to_numeric(df["vo"], errors="coerce").dropna().mean())
+
+    if np.isnan(uo) or np.isnan(vo):
+        raise HTTPException(status_code=502, detail="Current data did not contain valid velocity values.")
+
+    return reader_constant.Reader({
+        "x_sea_water_velocity": uo,
+        "y_sea_water_velocity": vo,
+        "x_wind": 2.0,
+        "y_wind": -2.0,
+    })
+
+
+def seed_monte_carlo_elements(model, lats, lons, seed_times, object_type):
+    try:
+        model.seed_elements(
+            lon=np.array(lons),
+            lat=np.array(lats),
+            time=np.array(seed_times, dtype=object),
+            number=len(lats),
+            object_type=object_type,
+        )
+    except Exception:
+        for lat, lon, seed_time in zip(lats, lons, seed_times):
+            model.seed_elements(
+                lon=lon,
+                lat=lat,
+                time=seed_time,
+                number=1,
+                object_type=object_type,
+            )
+
+
+def run_opendrift_area_simulation(request):
+    polygon_points = [(point.lat, point.lon) for point in request.polygon]
+    validate_polygon_points(polygon_points)
+
+    earliest_time = normalize_utc(request.earliest_time)
+    latest_time = normalize_utc(request.latest_time)
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+
+    if latest_time < earliest_time:
+        raise HTTPException(status_code=400, detail="latest_time must be after earliest_time.")
+
+    if earliest_time > now_utc:
+        raise HTTPException(status_code=400, detail="earliest_time must be in the past.")
+
+    latest_time = min(latest_time, now_utc)
+    elapsed_hours = (now_utc - earliest_time).total_seconds() / 3600
+    if elapsed_hours > MAX_SIMULATION_HOURS:
+        raise HTTPException(status_code=400, detail=f"Simulation is limited to {MAX_SIMULATION_DAYS} days.")
+
+    center_lat = sum(point[0] for point in polygon_points) / len(polygon_points)
+    center_lon = sum(point[1] for point in polygon_points) / len(polygon_points)
+
+    df, source = get_current_data_for_area(
+        center_lat,
+        center_lon,
+        earliest_time,
+        now_utc + datetime.timedelta(hours=2),
+        request.current_source,
+    )
+
+    lats = []
+    lons = []
+    incident_times = []
+    seed_times = []
+    consciousness_delays = []
+    time_span_seconds = (latest_time - earliest_time).total_seconds()
+
+    for _ in range(request.samples):
+        lat, lon = sample_point_in_polygon(polygon_points)
+        delay_minutes = sample_consciousness_delay_minutes(request.person)
+        incident_time = earliest_time + datetime.timedelta(seconds=random.uniform(0, time_span_seconds))
+        seed_time = min(incident_time + datetime.timedelta(minutes=delay_minutes), now_utc)
+
+        lats.append(lat)
+        lons.append(lon)
+        incident_times.append(incident_time)
+        seed_times.append(seed_time.replace(tzinfo=None))
+        consciousness_delays.append(delay_minutes)
+
+    model = Leeway(loglevel=30)
+    model.add_reader(current_reader_from_dataframe(df))
+    seed_monte_carlo_elements(model, lats, lons, seed_times, request.object_type)
+    model.run(end_time=now_utc.replace(tzinfo=None), time_step=900, time_step_output=900)
+
+    result = model.result
+    lat_history = result["lat"].values
+    lon_history = result["lon"].values
+
+    particles = []
+    for index, (lat_values, lon_values) in enumerate(zip(lat_history, lon_history)):
+        valid_indices = np.where(~np.isnan(lat_values) & ~np.isnan(lon_values))[0]
+        if len(valid_indices) == 0:
+            continue
+
+        final_index = valid_indices[-1]
+        final_lat = lat_values[final_index]
+        final_lon = lon_values[final_index]
+
+        particles.append({
+            "lat": round(float(final_lat), 6),
+            "lon": round(float(final_lon), 6),
+            "start_lat": round(float(lats[index]), 6),
+            "start_lon": round(float(lons[index]), 6),
+            "incident_time": incident_times[index].isoformat(),
+            "drift_start_time": seed_times[index].replace(tzinfo=datetime.timezone.utc).isoformat(),
+            "consciousness_delay_minutes": round(float(consciousness_delays[index]), 2),
+            "probability": 1 / request.samples,
+        })
+
+    if not particles:
+        raise HTTPException(status_code=502, detail="OpenDrift did not return any final particle positions.")
+
+    return {
+        "status": "success",
+        "simulation": "opendrift_monte_carlo",
+        "samples_requested": request.samples,
+        "samples_returned": len(particles),
+        "data_source_used": source,
+        "time_window": {
+            "earliest_time": earliest_time.isoformat(),
+            "latest_time": latest_time.isoformat(),
+            "evaluated_until": now_utc.isoformat(),
+        },
+        "person_model": request.person.model_dump(),
+        "particles": particles,
+        "center": {
+            "lat": round(float(np.mean([particle["lat"] for particle in particles])), 6),
+            "lon": round(float(np.mean([particle["lon"] for particle in particles])), 6),
+        },
+    }
+
 def run_trajectory(lat, lon, start_time, elapsed_hours, df, source):
     trajectory = [{"hour": 0, "lat": lat, "lon": lon}]
     current_lat = lat
@@ -226,3 +466,8 @@ def simulate_drift(
         "hours_simulated": round(elapsed_hours, 2),
         "data_source_used": source,
     }
+
+
+@app.post("/simulate-area")
+def simulate_area(request: AreaSimulationRequest):
+    return run_opendrift_area_simulation(request)

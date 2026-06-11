@@ -4,3 +4,4 @@ copernicusmarine
 pandas
 numpy
 requests
+opendrift

@@ -100,7 +100,7 @@ def simulate_drift(
     minutes: Optional[float] = Query(None),
     drowning_time: Optional[datetime.datetime] = Query(None),
     polygon: Optional[str] = Query(None),
-    floating: bool = Query(False, description="True = surface (2D); False = seabed (3D)"),
+    floating: bool = Query(True, description="True = surface (2D); False = seabed (3D)"),
     n_particles: int = Query(1000, ge=50, le=10000),
     point_radius_m: float = Query(150.0, ge=10.0, le=5000.0),
 ):

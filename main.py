@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 import datetime
+import json
 from typing import Optional
 import pandas as pd
 import numpy as np
@@ -147,24 +148,42 @@ def resolve_simulation_window(days, hours, minutes, drowning_time):
 
     return start_time, now_utc, elapsed_hours
 
-# --- API ENDPOINT ---
+def parse_polygon_points(polygon):
+    if polygon is None:
+        return None
 
-@app.get("/simulate")
-def simulate_drift(
-    lat: float = Query(..., description="Latitude of last seen position"),
-    lon: float = Query(..., description="Longitude of last seen position"),
-    days: Optional[float] = Query(None, ge=0, le=MAX_SIMULATION_DAYS, description="Days since drowning"),
-    hours: Optional[float] = Query(None, ge=0, le=MAX_SIMULATION_HOURS, description="Hours since drowning"),
-    minutes: Optional[float] = Query(None, ge=0, le=MAX_SIMULATION_HOURS * 60, description="Minutes since drowning"),
-    drowning_time: Optional[datetime.datetime] = Query(None, description="UTC drowning time as an ISO timestamp")
-):
-    start_time, now_utc, elapsed_hours = resolve_simulation_window(days, hours, minutes, drowning_time)
-    end_time = now_utc + datetime.timedelta(hours=1)
-    
-    # Fetch Data
-    df, source = get_current_data_fallback(lat, lon, start_time, end_time)
-    
-    # Run Simulation
+    try:
+        raw_points = json.loads(polygon)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Polygon must be valid JSON.")
+
+    if not isinstance(raw_points, list) or len(raw_points) < 3:
+        raise HTTPException(status_code=400, detail="Polygon must contain at least 3 points.")
+
+    points = []
+    for point in raw_points:
+        if isinstance(point, dict):
+            raw_lat = point.get("lat")
+            raw_lon = point.get("lon")
+        elif isinstance(point, list) and len(point) >= 2:
+            raw_lat, raw_lon = point[0], point[1]
+        else:
+            raise HTTPException(status_code=400, detail="Each polygon point must include lat and lon.")
+
+        try:
+            point_lat = float(raw_lat)
+            point_lon = float(raw_lon)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Polygon coordinates must be numbers.")
+
+        if not (-90 <= point_lat <= 90 and -180 <= point_lon <= 180):
+            raise HTTPException(status_code=400, detail="Polygon coordinates are outside valid lat/lon ranges.")
+
+        points.append((point_lat, point_lon))
+
+    return points
+
+def run_trajectory(lat, lon, start_time, elapsed_hours, df, source):
     trajectory = [{"hour": 0, "lat": lat, "lon": lon}]
     current_lat = lat
     current_lon = lon
@@ -172,7 +191,7 @@ def simulate_drift(
     remaining_hours = elapsed_hours
     elapsed_so_far = 0.0
     hour_index = 0
-    
+
     while remaining_hours > 1e-9:
         step_hours = min(1.0, remaining_hours)
         current_time += pd.to_timedelta(step_hours, unit='h')
@@ -186,7 +205,7 @@ def simulate_drift(
             step_hours=step_hours
         )
         elapsed_so_far += step_hours
-        
+
         trajectory.append({
             "hour": round(elapsed_so_far, 2),
             "lat": round(next_lat, 5),
@@ -195,11 +214,52 @@ def simulate_drift(
         current_lat, current_lon = next_lat, next_lon
         remaining_hours = max(0.0, remaining_hours - step_hours)
         hour_index += 1
-        
-    return {
+
+    return trajectory
+
+# --- API ENDPOINT ---
+
+@app.get("/simulate")
+def simulate_drift(
+    lat: float = Query(..., description="Latitude of last seen position"),
+    lon: float = Query(..., description="Longitude of last seen position"),
+    days: Optional[float] = Query(None, ge=0, le=MAX_SIMULATION_DAYS, description="Days since drowning"),
+    hours: Optional[float] = Query(None, ge=0, le=MAX_SIMULATION_HOURS, description="Hours since drowning"),
+    minutes: Optional[float] = Query(None, ge=0, le=MAX_SIMULATION_HOURS * 60, description="Minutes since drowning"),
+    drowning_time: Optional[datetime.datetime] = Query(None, description="UTC drowning time as an ISO timestamp"),
+    polygon: Optional[str] = Query(None, description="Optional JSON list of polygon points with lat/lon")
+):
+    start_time, now_utc, elapsed_hours = resolve_simulation_window(days, hours, minutes, drowning_time)
+    end_time = now_utc + datetime.timedelta(hours=1)
+    polygon_points = parse_polygon_points(polygon)
+
+    # Fetch Data
+    df, source = get_current_data_fallback(lat, lon, start_time, end_time)
+
+    # Run Simulation
+    trajectory = run_trajectory(lat, lon, start_time, elapsed_hours, df, source)
+    result = {
         "status": "success",
         "data_source_used": source,
         "initial_position": {"lat": lat, "lon": lon},
         "hours_simulated": round(elapsed_hours, 2),
         "trajectory": trajectory
     }
+
+    if polygon_points:
+        area_trajectories = []
+        for point_lat, point_lon in polygon_points:
+            area_trajectory = run_trajectory(point_lat, point_lon, start_time, elapsed_hours, df, source)
+            area_trajectories.append({
+                "start": {"lat": point_lat, "lon": point_lon},
+                "trajectory": area_trajectory
+            })
+
+        result["initial_polygon"] = [{"lat": point_lat, "lon": point_lon} for point_lat, point_lon in polygon_points]
+        result["area_trajectories"] = area_trajectories
+        result["final_polygon"] = [
+            {"lat": area["trajectory"][-1]["lat"], "lon": area["trajectory"][-1]["lon"]}
+            for area in area_trajectories
+        ]
+
+    return result

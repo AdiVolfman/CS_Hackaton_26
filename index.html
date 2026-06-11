@@ -22,6 +22,95 @@
         input[readonly] { color: #d8d8d8; background: #252525; }
         button { padding: 14px; border-radius: 6px; border: none; font-size: 15px; font-weight: bold; background: #00ffcc; color: #121212; cursor: pointer; transition: all 0.2s ease-in-out; }
         button:hover { background: #00ddbb; transform: translateY(-1px); }
+        button:disabled { cursor: wait; opacity: 0.7; transform: none; }
+        .pick-location-button {
+            width: 52px;
+            height: 52px;
+            padding: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #2a2a2a;
+            border: 1px solid #ff4b45;
+        }
+        .pick-location-button:hover { background: #352323; }
+        .pick-location-button.active {
+            background: rgba(255, 75, 69, 0.18);
+            border-color: #ff4b45;
+            box-shadow: 0 0 0 2px rgba(255, 75, 69, 0.25);
+        }
+        .map-tool-row { display: flex; align-items: stretch; gap: 10px; }
+        .map-pin-icon {
+            width: 24px;
+            height: 24px;
+            position: relative;
+            background: #ef2f2f;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.35);
+        }
+        .map-pin-icon::after {
+            content: "";
+            width: 10px;
+            height: 10px;
+            position: absolute;
+            top: 7px;
+            left: 7px;
+            border-radius: 50%;
+            background: #fff;
+        }
+        .polygon-icon {
+            width: 26px;
+            height: 24px;
+            display: block;
+            background: rgba(0, 255, 204, 0.22);
+            border: 3px solid #00ffcc;
+            clip-path: polygon(50% 0, 100% 38%, 82% 100%, 18% 100%, 0 38%);
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.35);
+        }
+        #pick-polygon-button {
+            border-color: #00ffcc;
+        }
+        #pick-polygon-button:hover { background: #1d3732; }
+        #pick-polygon-button.active {
+            background: rgba(0, 255, 204, 0.16);
+            box-shadow: 0 0 0 2px rgba(0, 255, 204, 0.22);
+        }
+        .polygon-info {
+            display: grid;
+            flex: 1;
+            min-width: 0;
+            gap: 6px;
+            padding: 10px 12px;
+            border: 1px solid rgba(0, 255, 204, 0.28);
+            border-radius: 6px;
+            background: rgba(0, 255, 204, 0.07);
+        }
+        .polygon-info-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            font-size: 12px;
+            color: #cfcfcf;
+        }
+        .polygon-info-row strong {
+            color: #ffffff;
+            font-size: 13px;
+            text-align: right;
+            white-space: nowrap;
+        }
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
         .hidden { display: none; }
         .time-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
         .elapsed-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
@@ -42,6 +131,32 @@
             box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
             transform: translate(-50%, -50%);
         }
+        .loading-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 44px;
+            padding: 10px 12px;
+            border: 1px solid rgba(0, 255, 204, 0.35);
+            border-radius: 6px;
+            background: rgba(0, 255, 204, 0.08);
+            color: #d8fff8;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .loading-indicator.hidden { display: none; }
+        .loading-spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255, 255, 255, 0.25);
+            border-top-color: #00ffcc;
+            border-radius: 50%;
+            animation: loading-spin 0.8s linear infinite;
+            flex: 0 0 auto;
+        }
+        @keyframes loading-spin {
+            to { transform: rotate(360deg); }
+        }
         #status-message { min-height: 18px; font-size: 12px; color: #aaa; }
         #status-message.error { color: #ff7676; }
         .footer { margin-top: auto; font-size: 11px; color: #666; border-top: 1px solid #333; padding-top: 15px; }
@@ -51,8 +166,32 @@
 
     <div id="sidebar">
         <h2>SafeCurrent UI</h2>
-        <p><strong>Operational Instruction:</strong><br>Click the sea area or enter coordinates manually to set the Last Seen Marker and calculate drift.</p>
+        <p><strong>Operational Instruction:</strong><br>Enter coordinates manually or press Pick From Map, then click the sea area to set the Last Seen Marker.</p>
         
+        <div class="map-tool-row">
+            <button id="pick-location-button" class="pick-location-button" onclick="togglePickLocationMode()" type="button" aria-label="Pick location from map" title="Pick location from map">
+                <span class="map-pin-icon" aria-hidden="true"></span>
+                <span class="sr-only">Pick location from map</span>
+            </button>
+            <button id="pick-polygon-button" class="pick-location-button" onclick="togglePolygonMode()" type="button" aria-label="Draw area on map" title="Draw area on map">
+                <span class="polygon-icon" aria-hidden="true"></span>
+                <span class="sr-only">Draw area on map</span>
+            </button>
+            <div id="polygon-info" class="polygon-info hidden" aria-live="polite">
+                <div class="polygon-info-row">
+                    <span>Area</span>
+                    <strong id="polygon-area-value">--</strong>
+                </div>
+                <div class="polygon-info-row">
+                    <span>Perimeter</span>
+                    <strong id="polygon-perimeter-value">--</strong>
+                </div>
+                <div class="polygon-info-row">
+                    <span>Points</span>
+                    <strong id="polygon-points-value">0</strong>
+                </div>
+            </div>
+        </div>
         <div class="input-group">
             <label for="lat">Latitude</label>
             <input type="number" id="lat" value="32.0800" min="-90" max="90" step="0.0001">
@@ -121,7 +260,11 @@
             </div>
         </div>
         
-        <button onclick="triggerSimulation()">Recalculate Current Points</button>
+        <button id="simulate-button" onclick="triggerSimulation()">Recalculate Current Points</button>
+        <div id="loading-indicator" class="loading-indicator hidden" role="status" aria-live="polite">
+            <div class="loading-spinner" aria-hidden="true"></div>
+            <span>Calculating drift...</span>
+        </div>
         <div id="status-message" role="status">Ready</div>
 
         <div class="footer">
@@ -217,6 +360,15 @@
         let pathLine = null;
         let startMarker = null;
         let heatLayer = null;
+        let areaPathLayer = null;
+        let finalAreaPolygon = null;
+        let isPickingLocation = false;
+        let isDrawingPolygon = false;
+        let selectedPolygon = null;
+        let polygonDraftLine = null;
+        let polygonVertexMarkers = [];
+        let polygonPoints = [];
+        const API_BASE_URL = 'http://127.0.0.1:8000';
         const MAX_SIMULATION_DAYS = 7;
         const MAX_SIMULATION_HOURS = MAX_SIMULATION_DAYS * 24;
 
@@ -248,6 +400,13 @@
             statusMessage.classList.toggle('error', isError);
         }
 
+        function setLoading(isLoading) {
+            document.getElementById('loading-indicator').classList.toggle('hidden', !isLoading);
+            document.getElementById('simulate-button').disabled = isLoading;
+            document.getElementById('pick-location-button').disabled = isLoading;
+            document.getElementById('pick-polygon-button').disabled = isLoading;
+        }
+
         function getSelectedPosition() {
             const lat = Number(document.getElementById('lat').value);
             const lon = Number(document.getElementById('lon').value);
@@ -263,11 +422,265 @@
             return {lat, lon};
         }
 
-        function setLastSeenMarker(lat, lon) {
+        function setLastSeenMarker(lat, lon, title = 'Last Seen Point') {
             if (startMarker) map.removeLayer(startMarker);
 
             startMarker = L.marker([lat, lon]).addTo(map)
-                .bindPopup("<b>Last Seen Point</b><br>Calculating drift vectors...").openPopup();
+                .bindPopup(`<b>${title}</b><br>Calculating drift vectors...`).openPopup();
+        }
+
+        function clearAreaResultLayers() {
+            if (areaPathLayer) {
+                map.removeLayer(areaPathLayer);
+                areaPathLayer = null;
+            }
+
+            if (finalAreaPolygon) {
+                map.removeLayer(finalAreaPolygon);
+                finalAreaPolygon = null;
+            }
+        }
+
+        function formatArea(areaSqMeters) {
+            if (areaSqMeters >= 1000000) {
+                return `${(areaSqMeters / 1000000).toFixed(2)} km2`;
+            }
+
+            return `${Math.round(areaSqMeters).toLocaleString()} m2`;
+        }
+
+        function formatDistance(distanceMeters) {
+            if (distanceMeters >= 1000) {
+                return `${(distanceMeters / 1000).toFixed(2)} km`;
+            }
+
+            return `${Math.round(distanceMeters).toLocaleString()} m`;
+        }
+
+        function getDistanceMeters(pointA, pointB) {
+            const earthRadiusMeters = 6371000;
+            const lat1 = pointA[0] * Math.PI / 180;
+            const lat2 = pointB[0] * Math.PI / 180;
+            const deltaLat = (pointB[0] - pointA[0]) * Math.PI / 180;
+            const deltaLon = (pointB[1] - pointA[1]) * Math.PI / 180;
+            const haversine =
+                Math.sin(deltaLat / 2) ** 2 +
+                Math.cos(lat1) * Math.cos(lat2) * Math.sin(deltaLon / 2) ** 2;
+
+            return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+        }
+
+        function getPolygonAreaSqMeters(points) {
+            if (points.length < 3) return 0;
+
+            const earthRadiusMeters = 6378137;
+            let area = 0;
+
+            points.forEach((point, index) => {
+                const nextPoint = points[(index + 1) % points.length];
+                const lon1 = point[1] * Math.PI / 180;
+                const lon2 = nextPoint[1] * Math.PI / 180;
+                const lat1 = point[0] * Math.PI / 180;
+                const lat2 = nextPoint[0] * Math.PI / 180;
+
+                area += (lon2 - lon1) * (2 + Math.sin(lat1) + Math.sin(lat2));
+            });
+
+            return Math.abs(area * earthRadiusMeters * earthRadiusMeters / 2);
+        }
+
+        function getPolygonPerimeterMeters(points) {
+            if (points.length < 3) return 0;
+
+            return points.reduce((total, point, index) => {
+                const nextPoint = points[(index + 1) % points.length];
+                return total + getDistanceMeters(point, nextPoint);
+            }, 0);
+        }
+
+        function updatePolygonInfo() {
+            const polygonInfo = document.getElementById('polygon-info');
+            const areaValue = document.getElementById('polygon-area-value');
+            const perimeterValue = document.getElementById('polygon-perimeter-value');
+            const pointsValue = document.getElementById('polygon-points-value');
+
+            if (polygonPoints.length === 0) {
+                polygonInfo.classList.add('hidden');
+                areaValue.textContent = '--';
+                perimeterValue.textContent = '--';
+                pointsValue.textContent = '0';
+                return;
+            }
+
+            polygonInfo.classList.remove('hidden');
+            pointsValue.textContent = String(polygonPoints.length);
+
+            if (polygonPoints.length < 3) {
+                areaValue.textContent = '--';
+                perimeterValue.textContent = '--';
+                return;
+            }
+
+            areaValue.textContent = formatArea(getPolygonAreaSqMeters(polygonPoints));
+            perimeterValue.textContent = formatDistance(getPolygonPerimeterMeters(polygonPoints));
+        }
+
+        function setPickLocationMode(isActive) {
+            isPickingLocation = isActive;
+            const pickButton = document.getElementById('pick-location-button');
+
+            if (isPickingLocation && isDrawingPolygon) {
+                cancelPolygonDrawing(false);
+            }
+
+            pickButton.classList.toggle('active', isPickingLocation);
+            pickButton.setAttribute('aria-label', isPickingLocation ? 'Click map to pick location' : 'Pick location from map');
+            pickButton.title = isPickingLocation ? 'Click map to pick location' : 'Pick location from map';
+            map.getContainer().style.cursor = isPickingLocation ? 'crosshair' : '';
+            setStatus(isPickingLocation ? 'Click the map to set the Last Seen Point.' : 'Ready');
+        }
+
+        function togglePickLocationMode() {
+            setPickLocationMode(!isPickingLocation);
+        }
+
+        function clearPolygonSelection() {
+            if (selectedPolygon) {
+                map.removeLayer(selectedPolygon);
+                selectedPolygon = null;
+            }
+
+            if (polygonDraftLine) {
+                map.removeLayer(polygonDraftLine);
+                polygonDraftLine = null;
+            }
+
+            polygonVertexMarkers.forEach(marker => map.removeLayer(marker));
+            polygonVertexMarkers = [];
+            polygonPoints = [];
+            updatePolygonInfo();
+        }
+
+        function setPolygonButtonState(isActive) {
+            const polygonButton = document.getElementById('pick-polygon-button');
+
+            polygonButton.classList.toggle('active', isActive);
+            polygonButton.setAttribute('aria-label', isActive ? 'Finish area selection' : 'Draw area on map');
+            polygonButton.title = isActive ? 'Finish area selection' : 'Draw area on map';
+        }
+
+        function startPolygonDrawing() {
+            if (isPickingLocation) {
+                setPickLocationMode(false);
+            }
+
+            clearPolygonSelection();
+            clearAreaResultLayers();
+            isDrawingPolygon = true;
+            setPolygonButtonState(true);
+            map.getContainer().style.cursor = 'crosshair';
+            setStatus('Click the map to add polygon points. Press the polygon button again to finish.');
+        }
+
+        function cancelPolygonDrawing(updateStatus = true) {
+            isDrawingPolygon = false;
+            setPolygonButtonState(false);
+            map.getContainer().style.cursor = '';
+
+            if (polygonPoints.length < 3) {
+                clearPolygonSelection();
+            }
+
+            if (updateStatus) {
+                setStatus('Ready');
+            }
+        }
+
+        function addPolygonPoint(lat, lon) {
+            const point = [lat, lon];
+            polygonPoints.push(point);
+            updatePolygonInfo();
+
+            const vertexMarker = L.circleMarker(point, {
+                radius: 5,
+                color: '#00ffcc',
+                weight: 2,
+                fillColor: '#121212',
+                fillOpacity: 1
+            }).addTo(map);
+            polygonVertexMarkers.push(vertexMarker);
+
+            if (polygonPoints.length < 3) {
+                if (polygonDraftLine) {
+                    polygonDraftLine.setLatLngs(polygonPoints);
+                } else {
+                    polygonDraftLine = L.polyline(polygonPoints, {
+                        color: '#00ffcc',
+                        weight: 3,
+                        dashArray: '4, 6'
+                    }).addTo(map);
+                }
+                setStatus(`${polygonPoints.length} polygon point${polygonPoints.length === 1 ? '' : 's'} selected. Add at least 3.`);
+                return;
+            }
+
+            if (polygonDraftLine) {
+                map.removeLayer(polygonDraftLine);
+                polygonDraftLine = null;
+            }
+
+            if (selectedPolygon) {
+                selectedPolygon.setLatLngs([polygonPoints]);
+            } else {
+                selectedPolygon = L.polygon(polygonPoints, {
+                    color: '#00ffcc',
+                    weight: 3,
+                    fillColor: '#00ffcc',
+                    fillOpacity: 0.18
+                }).addTo(map);
+            }
+
+            setStatus(`${polygonPoints.length} polygon points selected. Area ${formatArea(getPolygonAreaSqMeters(polygonPoints))}. Press the polygon button again to finish.`);
+        }
+
+        function finishPolygonSelection() {
+            if (!selectedPolygon || polygonPoints.length < 3) {
+                setStatus('Add at least 3 polygon points before finishing.', true);
+                return;
+            }
+
+            const center = selectedPolygon.getBounds().getCenter();
+            document.getElementById('lat').value = center.lat.toFixed(4);
+            document.getElementById('lon').value = center.lng.toFixed(4);
+
+            polygonVertexMarkers.forEach(marker => map.removeLayer(marker));
+            polygonVertexMarkers = [];
+            isDrawingPolygon = false;
+            setPolygonButtonState(false);
+            map.getContainer().style.cursor = '';
+            setLastSeenMarker(center.lat, center.lng, 'Selected Area Center');
+            updatePolygonInfo();
+            setStatus(`Polygon selected: ${formatArea(getPolygonAreaSqMeters(polygonPoints))}. Recalculate when ready.`);
+        }
+
+        function getSelectedPolygonPayload() {
+            if (!selectedPolygon || polygonPoints.length < 3) {
+                return null;
+            }
+
+            return polygonPoints.map(point => ({
+                lat: Number(point[0].toFixed(5)),
+                lon: Number(point[1].toFixed(5))
+            }));
+        }
+
+        function togglePolygonMode() {
+            if (isDrawingPolygon) {
+                finishPolygonSelection();
+                return;
+            }
+
+            startPolygonDrawing();
         }
 
         function getElementCenter(element) {
@@ -566,7 +979,12 @@
         function buildSimulationParams(lat, lon) {
             const mode = document.getElementById('drowning-mode').value;
             const params = new URLSearchParams({lat, lon});
+            const polygonPayload = getSelectedPolygonPayload();
             let elapsedHours = 0;
+
+            if (polygonPayload) {
+                params.set('polygon', JSON.stringify(polygonPayload));
+            }
 
             if (mode === 'elapsed') {
                 const days = Number(document.getElementById('days').value);
@@ -594,38 +1012,67 @@
             return {params, elapsedHours};
         }
 
-        // CLICK MAP TO DROP PIN AND RUN
+        // Pick mode lets regular map clicks pan/inspect without changing the selected location.
         map.on('click', function(e) {
             const clickedLat = e.latlng.lat;
             const clickedLng = e.latlng.lng;
+
+            if (isDrawingPolygon) {
+                addPolygonPoint(clickedLat, clickedLng);
+                return;
+            }
+
+            if (!isPickingLocation) return;
             
             // Update the UI inputs so the user sees the exact coordinates
             document.getElementById('lat').value = clickedLat.toFixed(4);
             document.getElementById('lon').value = clickedLng.toFixed(4);
             
             // Draw or move the visual Red Pin on the map instantly
+            clearPolygonSelection();
+            clearAreaResultLayers();
             setLastSeenMarker(clickedLat, clickedLng);
-            
-            // Trigger the backend engine
-            triggerSimulation();
+            setPickLocationMode(false);
         });
 
         async function triggerSimulation() {
             let elapsedHours = 0;
 
             try {
+                if (isDrawingPolygon) {
+                    if (!selectedPolygon || polygonPoints.length < 3) {
+                        throw new Error('Finish the polygon first, or add at least 3 points.');
+                    }
+
+                    finishPolygonSelection();
+                }
+
                 const {lat, lon} = getSelectedPosition();
                 const simulationInput = buildSimulationParams(lat, lon);
                 elapsedHours = simulationInput.elapsedHours;
 
+                if (isPickingLocation) {
+                    setPickLocationMode(false);
+                }
+
                 // Clear previous paths and heatmaps, keep the startMarker we just dropped
-                if (pathLine) map.removeLayer(pathLine);
-                if (heatLayer) map.removeLayer(heatLayer);
+                if (pathLine) {
+                    map.removeLayer(pathLine);
+                    pathLine = null;
+                }
+
+                if (heatLayer) {
+                    map.removeLayer(heatLayer);
+                    heatLayer = null;
+                }
+
+                clearAreaResultLayers();
 
                 setLastSeenMarker(lat, lon);
+                setLoading(true);
                 setStatus('Calculating drift...');
 
-                const response = await fetch(`http://127.0.0.1:8000/simulate?${simulationInput.params.toString()}`);
+                const response = await fetch(`${API_BASE_URL}/simulate?${simulationInput.params.toString()}`);
                 const result = await response.json();
 
                 if (!response.ok) {
@@ -635,9 +1082,40 @@
                 if (result.status === "success" && result.trajectory.length > 1) {
                     const trajectory = result.trajectory;
                     const latLngs = trajectory.map(p => [p.lat, p.lon]);
+                    let finalAreaPoints = [];
 
                     // Draw the turquoise dashed path showing history
                     pathLine = L.polyline(latLngs, {color: '#00ffcc', weight: 4, dashArray: '6, 8'}).addTo(map);
+
+                    if (Array.isArray(result.area_trajectories) && result.area_trajectories.length > 0) {
+                        areaPathLayer = L.layerGroup().addTo(map);
+
+                        result.area_trajectories.forEach(area => {
+                            const areaLatLngs = area.trajectory.map(p => [p.lat, p.lon]);
+
+                            if (areaLatLngs.length > 1) {
+                                L.polyline(areaLatLngs, {
+                                    color: '#ffbf47',
+                                    weight: 2,
+                                    opacity: 0.75,
+                                    dashArray: '3, 6'
+                                }).addTo(areaPathLayer);
+                            }
+
+                            if (areaLatLngs.length > 0) {
+                                finalAreaPoints.push(areaLatLngs[areaLatLngs.length - 1]);
+                            }
+                        });
+
+                        if (finalAreaPoints.length >= 3) {
+                            finalAreaPolygon = L.polygon(finalAreaPoints, {
+                                color: '#ffbf47',
+                                weight: 3,
+                                fillColor: '#ffbf47',
+                                fillOpacity: 0.2
+                            }).addTo(map).bindPopup('<b>Predicted Area</b><br>Polygon drift projection.');
+                        }
+                    }
 
                     // Build expanding uncertainty Heatmap around the final zone
                     let heatPoints = [];
@@ -655,6 +1133,7 @@
                             }
                         }
                     });
+                    finalAreaPoints.forEach(point => heatPoints.push([point[0], point[1], 0.8]));
 
                     heatLayer = L.heatLayer(heatPoints, {
                         radius: 28, 
@@ -664,12 +1143,19 @@
                     }).addTo(map);
 
                     // Smoothly slide map view to the target search zone
-                    map.panTo([trajectory[trajectory.length - 1].lat, trajectory[trajectory.length - 1].lon]);
-                    setStatus(`Calculated ${result.hours_simulated} hours from ${result.data_source_used}.`);
+                    if (finalAreaPoints.length >= 3) {
+                        map.fitBounds(L.latLngBounds(latLngs.concat(finalAreaPoints)).pad(0.18));
+                        setStatus(`Calculated ${result.hours_simulated} hours from ${result.data_source_used} for selected area.`);
+                    } else {
+                        map.panTo([trajectory[trajectory.length - 1].lat, trajectory[trajectory.length - 1].lon]);
+                        setStatus(`Calculated ${result.hours_simulated} hours from ${result.data_source_used}.`);
+                    }
                 }
             } catch (error) {
                 console.error("API Connection Error:", error);
                 setStatus(error.message, true);
+            } finally {
+                setLoading(false);
             }
         }
 

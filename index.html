@@ -17,10 +17,15 @@
         p { margin: 0; font-size: 14px; color: #ccc; line-height: 1.4; }
         .input-group { display: flex; flex-direction: column; gap: 6px; }
         label { font-size: 12px; color: #00ffcc; font-weight: bold; text-transform: uppercase; }
-        input { padding: 12px; background: #2a2a2a; color: white; border: 1px solid #3d3d3d; border-radius: 6px; font-size: 14px; }
-        input:focus { border-color: #00ffcc; outline: none; }
+        input, select { padding: 12px; background: #2a2a2a; color: white; border: 1px solid #3d3d3d; border-radius: 6px; font-size: 14px; }
+        input:focus, select:focus { border-color: #00ffcc; outline: none; }
         button { padding: 14px; border-radius: 6px; border: none; font-size: 15px; font-weight: bold; background: #00ffcc; color: #121212; cursor: pointer; transition: all 0.2s ease-in-out; }
-        button:hover { background: #00ttbb; transform: translateY(-1px); }
+        button:hover { background: #00ddbb; transform: translateY(-1px); }
+        .hidden { display: none; }
+        .time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .time-field { display: flex; flex-direction: column; gap: 6px; }
+        #status-message { min-height: 18px; font-size: 12px; color: #aaa; }
+        #status-message.error { color: #ff7676; }
         .footer { margin-top: auto; font-size: 11px; color: #666; border-top: 1px solid #333; padding-top: 15px; }
     </style>
 </head>
@@ -28,22 +33,62 @@
 
     <div id="sidebar">
         <h2>SafeCurrent UI</h2>
-        <p><strong>Operational Instruction:</strong><br>Click anywhere on the sea area to drop the Last Seen Marker and calculate drift instantly.</p>
+        <p><strong>Operational Instruction:</strong><br>Click the sea area or enter coordinates manually to set the Last Seen Marker and calculate drift.</p>
         
         <div class="input-group">
-            <label>Latitude (Auto-filled)</label>
-            <input type="number" id="lat" value="32.0800" step="0.0001" readonly>
+            <label for="lat">Latitude</label>
+            <input type="number" id="lat" value="32.0800" min="-90" max="90" step="0.0001">
         </div>
         <div class="input-group">
-            <label>Longitude (Auto-filled)</label>
-            <input type="number" id="lon" value="34.7650" step="0.0001" readonly>
+            <label for="lon">Longitude</label>
+            <input type="number" id="lon" value="34.7650" min="-180" max="180" step="0.0001">
         </div>
         <div class="input-group">
-            <label>Hours Since Drowning:</label>
-            <input type="number" id="hours" value="4" min="1" max="24">
+            <div class="time-row">
+                <div class="time-field">
+                    <label for="weight">Weight</label>
+                    <input type="number" id="weight" value="70" min="1" max="300" step="0.1">
+                </div>
+                <div class="time-field">
+                    <label for="age">Age</label>
+                    <input type="number" id="age" value="30" min="0" max="120" step="1">
+                </div>
+            </div>
+        </div>
+        <div class="input-group">
+            <label for="drowning-mode">Drowning Time Input</label>
+            <select id="drowning-mode" onchange="updateDrowningInputVisibility()">
+                <option value="elapsed">Time Since Drowning</option>
+                <option value="time">Time of Drowning</option>
+            </select>
+        </div>
+        <div class="input-group drowning-input" id="elapsed-input-group">
+            <div class="time-row">
+                <div class="time-field">
+                    <label for="hours">Hours</label>
+                    <input type="number" id="hours" value="4" min="0" max="24" step="1">
+                </div>
+                <div class="time-field">
+                    <label for="minutes">Minutes</label>
+                    <input type="number" id="minutes" value="0" min="0" max="59" step="1">
+                </div>
+            </div>
+        </div>
+        <div class="input-group drowning-input hidden" id="time-input-group">
+            <div class="time-row">
+                <div class="time-field">
+                    <label for="drowning-date">Date</label>
+                    <input type="date" id="drowning-date" onchange="updateDrowningTimeLimits()">
+                </div>
+                <div class="time-field">
+                    <label for="drowning-time">Time</label>
+                    <input type="time" id="drowning-time" step="60">
+                </div>
+            </div>
         </div>
         
         <button onclick="triggerSimulation()">Recalculate Current Points</button>
+        <div id="status-message" role="status">Ready</div>
 
         <div class="footer">
             System Status: Connected<br>
@@ -66,6 +111,100 @@
         let startMarker = null;
         let heatLayer = null;
 
+        function toLocalDateTimeParts(date) {
+            const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+            const value = localDate.toISOString().slice(0, 16);
+            return {
+                date: value.slice(0, 10),
+                time: value.slice(11, 16)
+            };
+        }
+
+        function setStatus(message, isError = false) {
+            const statusMessage = document.getElementById('status-message');
+            statusMessage.textContent = message;
+            statusMessage.classList.toggle('error', isError);
+        }
+
+        function getSelectedPosition() {
+            const lat = Number(document.getElementById('lat').value);
+            const lon = Number(document.getElementById('lon').value);
+
+            if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+                throw new Error('Enter a valid latitude between -90 and 90.');
+            }
+
+            if (!Number.isFinite(lon) || lon < -180 || lon > 180) {
+                throw new Error('Enter a valid longitude between -180 and 180.');
+            }
+
+            return {lat, lon};
+        }
+
+        function setLastSeenMarker(lat, lon) {
+            if (startMarker) map.removeLayer(startMarker);
+
+            startMarker = L.marker([lat, lon]).addTo(map)
+                .bindPopup("<b>Last Seen Point</b><br>Calculating drift vectors...").openPopup();
+        }
+
+        function updateDrowningInputVisibility() {
+            const mode = document.getElementById('drowning-mode').value;
+            document.querySelectorAll('.drowning-input').forEach(group => group.classList.add('hidden'));
+            document.getElementById(`${mode}-input-group`).classList.remove('hidden');
+
+            updateDrowningTimeLimits();
+        }
+
+        function updateDrowningTimeLimits() {
+            const nowParts = toLocalDateTimeParts(new Date());
+            const drowningDateInput = document.getElementById('drowning-date');
+            const drowningTimeInput = document.getElementById('drowning-time');
+
+            drowningDateInput.max = nowParts.date;
+
+            if (drowningDateInput.value === nowParts.date) {
+                drowningTimeInput.max = nowParts.time;
+            } else {
+                drowningTimeInput.removeAttribute('max');
+            }
+        }
+
+        function buildSimulationParams(lat, lon) {
+            const mode = document.getElementById('drowning-mode').value;
+            const params = new URLSearchParams({lat, lon});
+            let elapsedHours = 0;
+
+            if (mode === 'elapsed') {
+                const hours = Number(document.getElementById('hours').value);
+                const minutes = Number(document.getElementById('minutes').value);
+                elapsedHours = hours + minutes / 60;
+                params.set('hours', hours);
+                params.set('minutes', minutes);
+            } else {
+                const drowningDateValue = document.getElementById('drowning-date').value;
+                const drowningTimeValue = document.getElementById('drowning-time').value;
+                const drowningDate = new Date(`${drowningDateValue}T${drowningTimeValue}`);
+
+                if (!drowningDateValue || !drowningTimeValue || Number.isNaN(drowningDate.getTime())) {
+                    throw new Error('Choose a valid drowning date and time.');
+                }
+
+                elapsedHours = (Date.now() - drowningDate.getTime()) / 3600000;
+                params.set('drowning_time', drowningDate.toISOString());
+            }
+
+            if (!Number.isFinite(elapsedHours) || elapsedHours <= 0) {
+                throw new Error('The drowning time must be in the past.');
+            }
+
+            if (elapsedHours > 24) {
+                throw new Error('Use a value up to 24 hours.');
+            }
+
+            return {params, elapsedHours};
+        }
+
         // CLICK MAP TO DROP PIN AND RUN
         map.on('click', function(e) {
             const clickedLat = e.latlng.lat;
@@ -76,27 +215,33 @@
             document.getElementById('lon').value = clickedLng.toFixed(4);
             
             // Draw or move the visual Red Pin on the map instantly
-            if (startMarker) map.removeLayer(startMarker);
-            
-            startMarker = L.marker([clickedLat, clickedLng]).addTo(map)
-                .bindPopup("<b>Last Seen Point</b><br>Calculating drift vectors...").openPopup();
+            setLastSeenMarker(clickedLat, clickedLng);
             
             // Trigger the backend engine
             triggerSimulation();
         });
 
         async function triggerSimulation() {
-            const lat = document.getElementById('lat').value;
-            const lon = document.getElementById('lon').value;
-            const hours = document.getElementById('hours').value;
-
-            // Clear previous paths and heatmaps, keep the startMarker we just dropped
-            if (pathLine) map.removeLayer(pathLine);
-            if (heatLayer) map.removeLayer(heatLayer);
+            let elapsedHours = 0;
 
             try {
-                const response = await fetch(`http://127.0.0.1:8000/simulate?lat=${lat}&lon=${lon}&hours=${hours}`);
+                const {lat, lon} = getSelectedPosition();
+                const simulationInput = buildSimulationParams(lat, lon);
+                elapsedHours = simulationInput.elapsedHours;
+
+                // Clear previous paths and heatmaps, keep the startMarker we just dropped
+                if (pathLine) map.removeLayer(pathLine);
+                if (heatLayer) map.removeLayer(heatLayer);
+
+                setLastSeenMarker(lat, lon);
+                setStatus('Calculating drift...');
+
+                const response = await fetch(`http://127.0.0.1:8000/simulate?${simulationInput.params.toString()}`);
                 const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.detail || 'Simulation failed.');
+                }
 
                 if (result.status === "success" && result.trajectory.length > 1) {
                     const trajectory = result.trajectory;
@@ -114,7 +259,7 @@
                         // If it's the last predicted point, spread the statistical search area
                         if (index === trajectory.length - 1) {
                             for (let i = 0; i < 40; i++) {
-                                let dispersion = 0.0025 * hours; 
+                                let dispersion = 0.0025 * elapsedHours;
                                 let randomLat = point.lat + (Math.random() - 0.5) * dispersion;
                                 let randomLon = point.lon + (Math.random() - 0.5) * dispersion;
                                 heatPoints.push([randomLat, randomLon, 0.65]);
@@ -131,11 +276,18 @@
 
                     // Smoothly slide map view to the target search zone
                     map.panTo([trajectory[trajectory.length - 1].lat, trajectory[trajectory.length - 1].lon]);
+                    setStatus(`Calculated ${result.hours_simulated} hours from ${result.data_source_used}.`);
                 }
             } catch (error) {
                 console.error("API Connection Error:", error);
+                setStatus(error.message, true);
             }
         }
+
+        const defaultDrowningTime = toLocalDateTimeParts(new Date(Date.now() - 4 * 3600000));
+        document.getElementById('drowning-date').value = defaultDrowningTime.date;
+        document.getElementById('drowning-time').value = defaultDrowningTime.time;
+        updateDrowningInputVisibility();
     </script>
 </body>
 </html>

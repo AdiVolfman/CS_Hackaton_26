@@ -56,8 +56,8 @@ Then open `index.html` in a browser.
 
 ## Use
 
-1. Click a point in the sea on the map.
-2. Adjust `Hours Since Drowning` if needed.
+1. Click a point in the sea on the map, or enter latitude and longitude manually.
+2. Choose how to enter the drowning time: elapsed time with hours and minutes, or exact time of drowning.
 3. Click `Recalculate Current Points`.
 4. The map shows the predicted drift path and search area.
 
@@ -71,6 +71,8 @@ You can test the API directly with:
 
 ```text
 http://127.0.0.1:8000/simulate?lat=32.0800&lon=34.7650&hours=4
+http://127.0.0.1:8000/simulate?lat=32.0800&lon=34.7650&hours=1&minutes=30
+http://127.0.0.1:8000/simulate?lat=32.0800&lon=34.7650&drowning_time=2026-06-11T07:30:00Z
 ```
 
 More detailed setup notes are in `SETUP_TUTORIAL.txt`.

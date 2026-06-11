@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 import xarray as xr
-from opendrift.models.leeway import Leeway
+from opendrift.models.oceandrift import OceanDrift
 from opendrift.readers.reader_netCDF_CF_generic import Reader as NetCDFReader
 
 import copernicusmarine
@@ -63,10 +63,6 @@ class SimulateRequest(BaseModel):
     entry_window_end: _dt.datetime
     forecast_time: Optional[_dt.datetime] = None
     n_particles: int = Field(1000, ge=50, le=10000)
-    # Leeway category. PIW-1 = Person In Water, unknown state (default).
-    # Others: PIW-2 vertical conscious, PIW-3 sitting, PIW-4 survival suit,
-    # PIW-5 scuba, PIW-6 deceased face-down.
-    object_type: int = Field(1, ge=1, le=6)
 
 
 # ---------------------------------------------------------------------------
@@ -74,13 +70,12 @@ class SimulateRequest(BaseModel):
 
 
 def fetch_currents_copernicus(min_lon, min_lat, max_lon, max_lat, t0, t1) -> str:
-    """Download the Copernicus current field as a NetCDF file and return its path.
-
-    OpenDrift's NetCDF reader works on a local file rather than an in-memory
-    xarray, which is why we materialise to disk.
-    """
-    out = tempfile.NamedTemporaryFile(suffix=".nc", delete=False).name
-    log.info("Downloading Copernicus currents to %s", out)
+    """Download the Copernicus current field as a NetCDF file and return its path."""
+    import uuid
+    out_dir = tempfile.gettempdir()
+    out_name = f"safecurrent_{uuid.uuid4().hex}.nc"
+    out_path = os.path.join(out_dir, out_name)
+    log.info("Downloading Copernicus currents to %s", out_path)
     copernicusmarine.subset(
         dataset_id=COPERNICUS_DATASET,
         variables=["uo", "vo"],
@@ -90,77 +85,23 @@ def fetch_currents_copernicus(min_lon, min_lat, max_lon, max_lat, t0, t1) -> str
         maximum_latitude=max_lat,
         start_datetime=t0.strftime("%Y-%m-%dT%H:%M:%S"),
         end_datetime=t1.strftime("%Y-%m-%dT%H:%M:%S"),
-        output_filename=os.path.basename(out),
-        output_directory=os.path.dirname(out),
+        output_filename=out_name,
+        output_directory=out_dir,
         file_format="netcdf",
     )
-    return out
+    return out_path
 
 
-def fetch_wind_open_meteo(lat, lon, t0, t1) -> str:
-    """Fetch hourly 10-m wind from Open-Meteo and write a CF-compliant NetCDF.
-
-    OpenDrift's reader_netCDF_CF_generic accepts files with x_wind_10m and
-    y_wind_10m variables on a (time, lat, lon) grid; for a single point we
-    create a 1x1 spatial grid that the reader will broadcast.
-    """
-    now = _dt.datetime.utcnow()
-    past_days = max(0, int((now - t0).total_seconds() // 86400) + 1)
-    forecast_days = max(1, int((t1 - now).total_seconds() // 86400) + 1)
-    past_days = min(past_days, 7)
-    forecast_days = min(max(forecast_days, 1), 7)
-
-    params = {
-        "latitude": lat, "longitude": lon,
-        "hourly": "wind_speed_10m,wind_direction_10m",
-        "wind_speed_unit": "ms",
-        "past_days": past_days, "forecast_days": forecast_days,
-        "timezone": "UTC",
-    }
-    r = requests.get(OPEN_METEO_FORECAST_URL, params=params, timeout=20)
-    r.raise_for_status()
-    payload = r.json()
-    hourly = payload.get("hourly", {})
-    times = hourly.get("time", [])
-    speeds = hourly.get("wind_speed_10m", [])
-    dirs = hourly.get("wind_direction_10m", [])
-
-    # Convert "direction from" + speed to (u, v) "direction toward" components.
-    # Equation: u = -speed * sin(dir_rad);  v = -speed * cos(dir_rad)
-    rad = np.radians(np.array(dirs, dtype=float))
-    speed = np.array(speeds, dtype=float)
-    u10 = -speed * np.sin(rad)
-    v10 = -speed * np.cos(rad)
-
-    # Build a tiny 1x1 lat/lon grid spanning Israel to keep OpenDrift happy.
-    lats = np.array([lat - 0.5, lat + 0.5], dtype=float)
-    lons = np.array([lon - 0.5, lon + 0.5], dtype=float)
-    nT = len(times)
-    u_grid = np.broadcast_to(u10[:, None, None], (nT, 2, 2)).astype(np.float32)
-    v_grid = np.broadcast_to(v10[:, None, None], (nT, 2, 2)).astype(np.float32)
-
-    times_dt = np.array([np.datetime64(t) for t in times], dtype="datetime64[ns]")
-    ds = xr.Dataset(
-        data_vars={
-            "x_wind_10m": (("time", "latitude", "longitude"), u_grid, {"units": "m s-1", "standard_name": "x_wind"}),
-            "y_wind_10m": (("time", "latitude", "longitude"), v_grid, {"units": "m s-1", "standard_name": "y_wind"}),
-        },
-        coords={
-            "time": times_dt,
-            "latitude": ("latitude", lats, {"standard_name": "latitude", "units": "degrees_north"}),
-            "longitude": ("longitude", lons, {"standard_name": "longitude", "units": "degrees_east"}),
-        },
-    )
-    out = tempfile.NamedTemporaryFile(suffix=".nc", delete=False).name
-    ds.to_netcdf(out)
-    return out
+def fetch_wind_open_meteo(*args, **kwargs):
+    """Stub kept so old call sites don't crash. Wind is no longer used."""
+    return None
 
 
 # ---------------------------------------------------------------------------
 # Simulation
 
 
-def run_leeway(
+def run_oceandrift(
     polygon_lonlat: list[tuple[float, float]],
     point_latlon: Optional[tuple[float, float]],
     point_radius_m: float,
@@ -168,9 +109,8 @@ def run_leeway(
     entry_end: _dt.datetime,
     forecast_time: _dt.datetime,
     n_particles: int,
-    object_type: int,
 ) -> dict:
-    """Run OpenDrift Leeway and return final particle positions.
+    """Run OpenDrift OceanDrift (currents-only) and return final particle positions.
 
     Particles are seeded:
       - uniformly inside `polygon_lonlat` if it has >= 3 points,
@@ -178,6 +118,7 @@ def run_leeway(
 
     Each particle is given a random release time in [entry_start, entry_end]
     so that the time-uncertainty from the operator's input is captured.
+    Wind is NOT used; this is pure ocean-current advection.
     """
     if polygon_lonlat and len(polygon_lonlat) >= 3:
         lons = [p[0] for p in polygon_lonlat]
@@ -187,7 +128,6 @@ def run_leeway(
         seed_kind = "polygon"
     elif point_latlon is not None:
         plat, plon = point_latlon
-        # Seed bbox a bit larger than the radius for safety.
         deg_pad = max(0.005, point_radius_m / 90000.0)
         min_lon, max_lon = plon - deg_pad, plon + deg_pad
         min_lat, max_lat = plat - deg_pad, plat + deg_pad
@@ -195,7 +135,6 @@ def run_leeway(
     else:
         raise ValueError("Provide a polygon or a point.")
 
-    # Pad the data-fetch bbox so OpenDrift always has surrounding cells.
     fetch_pad = 0.3
     cur_path = fetch_currents_copernicus(
         min_lon - fetch_pad, min_lat - fetch_pad,
@@ -203,31 +142,27 @@ def run_leeway(
         entry_start - _dt.timedelta(hours=2),
         forecast_time + _dt.timedelta(hours=2),
     )
-    centroid_lat = 0.5 * (min_lat + max_lat)
-    centroid_lon = 0.5 * (min_lon + max_lon)
-    wind_path = fetch_wind_open_meteo(
-        centroid_lat, centroid_lon,
-        entry_start - _dt.timedelta(hours=2),
-        forecast_time + _dt.timedelta(hours=2),
-    )
 
-    o = Leeway(loglevel=30)
-    o.add_reader([NetCDFReader(cur_path), NetCDFReader(wind_path)])
+    o = OceanDrift(loglevel=30)
+    o.add_reader([NetCDFReader(cur_path)])
+    # OceanDrift can apply a random horizontal diffusivity to spread the
+    # ensemble realistically. 1 m^2/s is a reasonable coastal SAR default.
+    o.set_config("drift:horizontal_diffusivity", 1.0)
+    # Don't deactivate particles when they reach the coastline; we want all
+    # final positions for the heatmap.
+    o.set_config("general:coastline_action", "previous")
 
-    # Random per-particle release times within the entry window.
     rng = np.random.default_rng()
     window_s = max(1.0, (entry_end - entry_start).total_seconds())
     offsets = rng.uniform(0.0, window_s, size=n_particles)
     times = [entry_start + _dt.timedelta(seconds=float(s)) for s in offsets]
 
     if seed_kind == "polygon":
-        # Sample uniformly inside the polygon.
         poly_lons, poly_lats = _sample_polygon(polygon_lonlat, n_particles, rng)
         o.seed_elements(
             lon=poly_lons.tolist(),
             lat=poly_lats.tolist(),
             time=times,
-            object_type=object_type,
         )
     else:
         plat, plon = point_latlon
@@ -239,25 +174,19 @@ def run_leeway(
             lon=seed_lons.tolist(),
             lat=seed_lats.tolist(),
             time=times,
-            object_type=object_type,
         )
 
-    # Simulate to forecast_time. OpenDrift advances each particle from its
-    # release time to the simulation end. Time step 600s is the SAR default.
-    duration = forecast_time - entry_start
     o.run(end_time=forecast_time, time_step=600, time_step_output=3600)
 
     final_lons = np.atleast_1d(o.elements.lon)
     final_lats = np.atleast_1d(o.elements.lat)
-    deactivated_lons = np.atleast_1d(o.elements_deactivated.lon) if o.elements_deactivated.num_elements_active() > 0 else np.array([])
-    deactivated_lats = np.atleast_1d(o.elements_deactivated.lat) if o.elements_deactivated.num_elements_active() > 0 else np.array([])
+    deactivated_lons = np.atleast_1d(o.elements_deactivated.lon) if hasattr(o.elements_deactivated, 'lon') and len(o.elements_deactivated.lon) > 0 else np.array([])
+    deactivated_lats = np.atleast_1d(o.elements_deactivated.lat) if hasattr(o.elements_deactivated, 'lat') and len(o.elements_deactivated.lat) > 0 else np.array([])
     all_lons = np.concatenate([final_lons, deactivated_lons])
     all_lats = np.concatenate([final_lats, deactivated_lats])
 
-    # Cleanup temp files
     try:
         os.unlink(cur_path)
-        os.unlink(wind_path)
     except Exception:
         pass
 
@@ -266,7 +195,7 @@ def run_leeway(
         "lats": all_lats,
         "n_particles": int(all_lons.size),
         "currents_source": "copernicus",
-        "winds_source": "open-meteo",
+        "winds_source": "none (currents-only)",
     }
 
 
@@ -379,7 +308,7 @@ def simulate(req: SimulateRequest):
         raise HTTPException(400, "forecast_time must be after entry_window_start.")
 
     try:
-        result = run_leeway(
+        result = run_oceandrift(
             polygon_lonlat=polygon,
             point_latlon=(req.point.lat, req.point.lon) if req.point else None,
             point_radius_m=req.point_radius_m,
@@ -387,7 +316,6 @@ def simulate(req: SimulateRequest):
             entry_end=entry_end,
             forecast_time=forecast_time,
             n_particles=req.n_particles,
-            object_type=req.object_type,
         )
     except Exception as exc:
         log.exception("Simulation failed")

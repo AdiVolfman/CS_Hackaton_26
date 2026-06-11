@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SafeCurrent - Operational SAR Map</title>
+    <title>Neptune</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -14,6 +14,19 @@
         #sidebar { width: 320px; padding: 25px; background: #1e1e1e; display: flex; flex-direction: column; gap: 18px; box-shadow: 4px 0 15px rgba(0,0,0,0.6); z-index: 1000; box-sizing: border-box; overflow-y: auto; }
         #map { flex-grow: 1; height: 100%; position: relative; }
         h2 { margin: 0; color: #00ffcc; font-size: 24px; letter-spacing: 1px; }
+        .brand-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .brand-icon {
+            width: 108px;
+            height: 108px;
+            flex: 0 0 108px;
+            border-radius: 50%;
+            object-fit: cover;
+            filter: drop-shadow(0 0 8px rgba(0, 255, 204, 0.22));
+        }
         p { margin: 0; font-size: 14px; color: #ccc; line-height: 1.4; }
         .input-group { display: flex; flex-direction: column; gap: 6px; }
         label { font-size: 12px; color: #00ffcc; font-weight: bold; text-transform: uppercase; }
@@ -477,8 +490,8 @@
 <body>
 
     <div id="sidebar">
-        <h2 style="display: flex; align-items: center; gap: 8px;">
-            <img src="Neptune.jpeg" alt="Neptune" style="height: 1.6em; width: auto; border-radius: 4px;">
+        <h2 class="brand-title">
+            <img class="brand-icon" src="Neptune.png" alt="Neptune icon">
             Neptune
         </h2>
         <div id="status-message" role="status">Ready</div>

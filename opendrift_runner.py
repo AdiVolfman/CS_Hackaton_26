@@ -9,8 +9,10 @@ not in-memory pandas. Cheapest bridge is df → xarray.Dataset → tmp .nc → N
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import os
+import sys
 import tempfile
 import uuid
 from typing import Optional
@@ -102,8 +104,29 @@ def df_to_netcdf(df: pd.DataFrame) -> str:
 
     out_dir = tempfile.gettempdir()
     out_path = os.path.join(out_dir, f"safecurrent_{uuid.uuid4().hex}.nc")
-    ds.to_netcdf(out_path)
+    with _suppress_stderr_fd():
+        ds.to_netcdf(out_path)
     return out_path
+
+
+@contextlib.contextmanager
+def _suppress_stderr_fd():
+    """Silence C-level stderr (HDF5 prints diagnostics directly to fd 2 when it
+    probes a not-yet-existing netCDF target — harmless but noisy)."""
+    try:
+        stderr_fd = sys.stderr.fileno()
+    except (AttributeError, OSError, ValueError):
+        yield
+        return
+    saved = os.dup(stderr_fd)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, stderr_fd)
+        yield
+    finally:
+        os.dup2(saved, stderr_fd)
+        os.close(devnull)
+        os.close(saved)
 
 
 def _sample_polygon(polygon_lonlat, n, rng):
